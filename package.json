@@ -1,0 +1,14 @@
+{
+  "name": "auren-monorepo",
+  "private": true,
+  "version": "1.0.0",
+  "workspaces": [
+    "packages/frontend",
+    "packages/backend/auren-demo"
+  ],
+  "scripts": {},
+  "dependencies": {
+    "axios": "^1.13.1",
+    "monolith": "^0.0.1"
+  }
+}
