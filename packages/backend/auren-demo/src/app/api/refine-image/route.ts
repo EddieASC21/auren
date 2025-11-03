@@ -1,6 +1,15 @@
 import { NextResponse } from "next/server";
 import { GoogleAuth } from "google-auth-library";
 
+// ✅ Handle CORS preflight requests
+export async function OPTIONS() {
+  const response = new NextResponse(null, { status: 204 })
+  response.headers.set("Access-Control-Allow-Origin", "*")
+  response.headers.set("Access-Control-Allow-Methods", "POST, OPTIONS")
+  response.headers.set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+  return response
+}
+
 // Image refinement endpoint using Google Gemini 2.5 Flash for visual analysis
 export async function POST(req: Request) {
   try {
@@ -81,12 +90,19 @@ Be brief (one sentence). The last prompt was: "${lastPrompt || "none"}"
       data?.candidates?.[0]?.content?.parts?.[0]?.text?.trim() ||
       "Enhance clarity and lighting.";
 
-    return NextResponse.json({ suggestion });
+    // ✅ Include CORS headers in successful response
+    const response = NextResponse.json({ suggestion });
+    response.headers.set("Access-Control-Allow-Origin", "*");
+    return response;
+
   } catch (err: any) {
     console.error("Refine Image API error:", err);
-    return NextResponse.json(
+    // ✅ Include CORS headers on error responses too
+    const errorResponse = NextResponse.json(
       { error: err.message || "Gemini refine failed" },
       { status: 500 }
     );
+    errorResponse.headers.set("Access-Control-Allow-Origin", "*");
+    return errorResponse;
   }
 }

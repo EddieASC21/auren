@@ -8,6 +8,7 @@
   ],
   "scripts": {},
   "dependencies": {
+    "axin": "^0.0.0",
     "axios": "^1.13.1",
     "monolith": "^0.0.1"
   }

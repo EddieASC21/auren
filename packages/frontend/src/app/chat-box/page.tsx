@@ -5,12 +5,15 @@ import { useRef, useState, useEffect } from 'react'
 import Link from 'next/link'
 import Image from 'next/image'
 
-
 export default function ChatBoxPage() {
   const [message, setMessage] = useState('I want to make a custom hoodie')
   const [previewUrl, setPreviewUrl] = useState<string | null>(null)
+  const [isLoading, setIsLoading] = useState(false)
+  const [generatedImage, setGeneratedImage] = useState<string | null>(null)
+  const [errorMsg, setErrorMsg] = useState<string | null>(null)
   const dropRef = useRef<HTMLDivElement>(null)
 
+  // --- Handle drag-and-drop image preview
   useEffect(() => {
     const node = dropRef.current
     if (!node) return
@@ -28,9 +31,9 @@ export default function ChatBoxPage() {
         setPreviewUrl(url)
       }
     }
-    ;['dragenter', 'dragover', 'dragleave', 'drop'].forEach((eventName) => {
-      node.addEventListener(eventName as any, prevent)
-    })
+      ;['dragenter', 'dragover', 'dragleave', 'drop'].forEach((eventName) => {
+        node.addEventListener(eventName as any, prevent)
+      })
     node.addEventListener('drop', handleDrop as any)
 
     return () => {
@@ -41,10 +44,52 @@ export default function ChatBoxPage() {
     }
   }, [])
 
+  // --- Local file upload handler
   const onFile = (file?: File) => {
     if (!file) return
     const url = URL.createObjectURL(file)
     setPreviewUrl(url)
+  }
+
+  // --- Send message -> OpenAI -> Vertex AI -> Display result
+  const handleSend = async () => {
+    try {
+      setIsLoading(true)
+      setGeneratedImage(null)
+      setErrorMsg(null)
+
+      // Step 1️⃣ Send user message to backend OpenAI route
+      const chatRes = await fetch('http://localhost:3001/api/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prompt: message }),
+      })
+
+      const chatData = await chatRes.json()
+      if (!chatRes.ok) throw new Error(chatData.error || 'Failed to refine prompt')
+
+      console.log('✨ Refined prompt:', chatData.reply)
+
+      // Step 2️⃣ Send refined prompt to Imagen 4 route
+      const imgRes = await fetch('http://localhost:3001/api/generate-image', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          prompt: chatData.reply,
+          aspectRatio: '1:1',
+        }),
+      })
+
+      const imgData = await imgRes.json()
+      if (!imgRes.ok) throw new Error(imgData.error || 'Failed to generate image')
+
+      setGeneratedImage(imgData.imageUrl)
+    } catch (err: any) {
+      console.error('❌ ChatBox error:', err)
+      setErrorMsg(err.message || 'Something went wrong. Please try again.')
+    } finally {
+      setIsLoading(false)
+    }
   }
 
   return (
@@ -57,7 +102,7 @@ export default function ChatBoxPage() {
         backgroundAttachment: 'fixed',
       }}
     >
-      {/* Step and progress */}
+      {/* Step indicator */}
       <motion.div
         className="absolute top-8 left-8"
         initial={{ opacity: 0, x: -20 }}
@@ -75,7 +120,7 @@ export default function ChatBoxPage() {
         </div>
       </motion.div>
 
-      {/* Header copy */}
+      {/* Header */}
       <div className="relative z-10 flex flex-col items-center justify-center min-h-screen px-6 -mt-10 md:-mt-16">
         <motion.div
           className="text-center max-w-4xl"
@@ -92,7 +137,7 @@ export default function ChatBoxPage() {
           </p>
         </motion.div>
 
-        {/* Chat bar */}
+        {/* Chat input bar */}
         <motion.div
           ref={dropRef}
           className="mt-8 w-full max-w-3xl"
@@ -125,25 +170,68 @@ export default function ChatBoxPage() {
                 onChange={(e) => onFile(e.target.files?.[0] || undefined)}
               />
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" className="text-white">
-                <path d="M12 16V4m0 0 4 4M12 4 8 8" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"/>
-                <rect x="4" y="12" width="16" height="8" rx="2" stroke="currentColor" strokeWidth="1.6"/>
+                <path
+                  d="M12 16V4m0 0 4 4M12 4 8 8"
+                  stroke="currentColor"
+                  strokeWidth="1.6"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+                <rect
+                  x="4"
+                  y="12"
+                  width="16"
+                  height="8"
+                  rx="2"
+                  stroke="currentColor"
+                  strokeWidth="1.6"
+                />
               </svg>
             </label>
 
-            {/* send */}
+            {/* send button */}
             <button
-              onClick={() => {/* placeholder send */}}
+              onClick={handleSend}
+              disabled={isLoading}
               className="grid place-items-center w-10 h-10 rounded-lg bg-white/10 border border-white/20 text-white hover:bg-white/15 transition"
               title="Send"
               aria-label="Send"
             >
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
-                <path d="M3 11.5 20 4l-7.5 17-2.5-7.5L3 11.5z" stroke="currentColor" strokeWidth="1.6" fill="currentColor" fillOpacity="0.9"/>
-              </svg>
+              {isLoading ? (
+                <svg
+                  className="animate-spin w-5 h-5 text-white"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                >
+                  <circle
+                    className="opacity-25"
+                    cx="12"
+                    cy="12"
+                    r="10"
+                    stroke="currentColor"
+                    strokeWidth="4"
+                  />
+                  <path
+                    className="opacity-75"
+                    fill="currentColor"
+                    d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"
+                  />
+                </svg>
+              ) : (
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+                  <path
+                    d="M3 11.5 20 4l-7.5 17-2.5-7.5L3 11.5z"
+                    stroke="currentColor"
+                    strokeWidth="1.6"
+                    fill="currentColor"
+                    fillOpacity="0.9"
+                  />
+                </svg>
+              )}
             </button>
           </div>
 
-          {/* drag-and-drop preview */}
+          {/* File preview */}
           {previewUrl && (
             <div className="flex items-center gap-3 mt-3">
               <div className="relative w-12 h-12 rounded-lg overflow-hidden border border-white/20 bg-white/10">
@@ -152,9 +240,38 @@ export default function ChatBoxPage() {
               <span className="text-sm text-white/70">Image attached</span>
             </div>
           )}
+
+          {/* Error message */}
+          {errorMsg && (
+            <p className="mt-4 text-red-400 text-sm text-center">{errorMsg}</p>
+          )}
+
+          {/* Generated image */}
+          { generatedImage && (
+            <motion.div
+              className="mt-8 flex items-center justify-center w-full max-w-2xl mx-auto rounded-2xl border border-white/20 bg-black/40 backdrop-blur-xl overflow-hidden shadow-xl"
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.6 }}
+              style={{
+                aspectRatio: '1 / 1',
+                maxHeight: '400px', // limits height on large screens
+              }}
+            >
+              <div className="relative w-full h-full">
+                <Image
+                  src={generatedImage}
+                  alt="AI generated design"
+                  fill
+                  className="object-contain rounded-2xl"
+                  unoptimized
+                />
+              </div>
+            </motion.div>
+          )}
         </motion.div>
 
-        {/* Bottom navigation */}
+        {/* Navigation */}
         <div className="pointer-events-none absolute inset-x-0 bottom-10 flex items-center justify-between px-10">
           <Link href="/catalog" className="pointer-events-auto">
             <button className="w-28 h-12 rounded-full bg-white/10 text-white/80 border border-white/20 backdrop-blur-md text-sm font-medium hover:bg-white/20 hover:border-white/40 transition-all">
