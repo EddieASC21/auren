@@ -3,28 +3,36 @@
 import { motion } from 'framer-motion'
 import Image from 'next/image'
 import Link from 'next/link'
-import { useSearchParams } from 'next/navigation'
+import { useSearchParams } from 'next/navigation' // 👈 1. Import this
 import { Suspense } from 'react'
 
+// 2. Create a content component to handle the params
 function SizeChartContent() {
   const searchParams = useSearchParams()
 
-  // Decide where to go back to
-  const from = searchParams.get('from')
+  // 3. Reconstruct the query string. 
+  // This grabs "productId=...", "productName=...", etc. from the URL
+  const currentParams = searchParams.toString()
 
-  // Clone params and drop the "from" flag so we don't keep it forever
-  const params = new URLSearchParams(searchParams.toString())
-  params.delete('from')
-  const rest = params.toString()
-
-  const backBase = from === 'manual-order' ? '/manual-order' : '/order-quantity'
-  const backLink = rest ? `${backBase}?${rest}` : backBase
+  // 4. Build the dynamic link. If params exist, attach them.
+  const backLink = currentParams ? `/order-quantity?${currentParams}` : '/order-quantity'
 
   return (
     <main className="relative min-h-screen bg-white overflow-hidden">
       {/* Header */}
       <div className="bg-white border-b border-gray-200 px-6 py-4">
         <div className="max-w-7xl mx-auto flex items-center justify-between">
+          {/* 👇 5. Use the dynamic backLink here */}
+          <Link
+            href={backLink}
+            className="flex items-center text-gray-600 hover:text-gray-900 transition-colors"
+          >
+            <svg className="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+            </svg>
+            Back to Order
+          </Link>
+
           <div className="flex items-center gap-3">
             <div className="w-8 h-8 relative">
               <Image
@@ -72,6 +80,7 @@ function SizeChartContent() {
           </div>
 
           <div className="mt-8">
+            {/* 👇 6. Use the dynamic backLink here too */}
             <Link
               href={backLink}
               className="inline-flex items-center px-6 py-3 bg-gray-900 text-white rounded-lg hover:bg-gray-800 transition-colors"
@@ -88,6 +97,7 @@ function SizeChartContent() {
   )
 }
 
+// 7. Wrap in Suspense because we use useSearchParams
 export default function SizeChartPage() {
   return (
     <Suspense fallback={<div className="min-h-screen bg-white" />}>

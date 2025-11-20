@@ -7,7 +7,7 @@ const LIVE_FRONTEND_URL = process.env.FRONTEND_URL || "http://localhost:3000";
 // ✅ Handle CORS preflight requests
 export async function OPTIONS() {
   const response = new NextResponse(null, { status: 204 });
-  response.headers.set("Access-Control-Allow-Origin", LIVE_FRONTEND_URL);
+  response.headers.set("Access-Control-Allow-Origin", LIVE_FRONTEND_URL); // FIXED
   response.headers.set("Access-Control-Allow-Methods", "POST, OPTIONS");
   response.headers.set(
     "Access-Control-Allow-Headers",
@@ -16,12 +16,11 @@ export async function OPTIONS() {
   return response;
 }
 
-// Image regeneration endpoint using Google Vertex AI Imagen 3
+// Image regeneration endpoint using Google Vertex AI Imagen 3 for guided regeneration
 export async function POST(req: Request) {
   try {
-    
-    // Parse the request body
-    const { imageBase64, suggestion, originalPrompt } = await req.json();
+    // Parse the request body to get the image and suggestion
+    const { imageBase64, suggestion } = await req.json();
 
     // Validate required parameters
     if (!imageBase64) {
@@ -29,7 +28,7 @@ export async function POST(req: Request) {
         { error: "Missing imageBase64" },
         { status: 400 }
       );
-      res.headers.set("Access-Control-Allow-Origin", LIVE_FRONTEND_URL);
+      res.headers.set("Access-Control-Allow-Origin", LIVE_FRONTEND_URL); // FIXED
       return res;
     }
     if (!suggestion) {
@@ -37,34 +36,28 @@ export async function POST(req: Request) {
         { error: "Missing suggestion text" },
         { status: 400 }
       );
-      res.headers.set("Access-Control-Allow-Origin", LIVE_FRONTEND_URL);
+      res.headers.set("Access-Control-Allow-Origin", LIVE_FRONTEND_URL); // FIXED
       return res;
     }
-
-    // 👇 FIX: Clean the Base64 string (Remove "data:image/png;base64," prefix if present)
-    const cleanBase64 = imageBase64.replace(/^data:image\/\w+;base64,/, "");
 
     // Configure Vertex AI Imagen 3
     const project = process.env.GOOGLE_PROJECT_ID!;
     const location = "us-central1";
     const model = "imagen-3.0-generate-002";
 
-    // Authenticate
+    // Authenticate with Google service account
     const auth = new GoogleAuth({
       scopes: ["https://www.googleapis.com/auth/cloud-platform"],
     });
     const client = await auth.getClient();
     const token = await client.getAccessToken();
-    const finalPrompt = originalPrompt 
-      ? `${originalPrompt}. Apply these improvements: ${suggestion}`
-      : `Regenerate this image with improvements: ${suggestion}`;
 
     // 🧠 Imagen-3 guided regeneration
     const body = {
       instances: [
         {
           prompt: `Regenerate this image with subtle improvements — ${suggestion}`,
-          image: { bytesBase64Encoded: cleanBase64 }, // 👈 Use the cleaned string here
+          image: { bytesBase64Encoded: imageBase64 },
         },
       ],
       parameters: {
@@ -77,7 +70,7 @@ export async function POST(req: Request) {
       },
     };
 
-    // Send request to Imagen 3
+    // Send the request to Imagen 3
     const res = await fetch(
       `https://${location}-aiplatform.googleapis.com/v1/projects/${project}/locations/${location}/publishers/google/models/${model}:predict`,
       {
@@ -90,12 +83,14 @@ export async function POST(req: Request) {
       }
     );
 
+    // Check if the request was successful
     if (!res.ok) {
       const err = await res.text();
       console.error("Imagen 3 refine error:", err);
       throw new Error(`Imagen 3 refine failed: ${err}`);
     }
 
+    // Extract the regenerated image from the response
     const data = await res.json();
     const first = data?.predictions?.[0];
     const imageBase64Out =
@@ -110,7 +105,7 @@ export async function POST(req: Request) {
     const response = NextResponse.json({
       imageUrl: `data:image/png;base64,${imageBase64Out}`,
     });
-    response.headers.set("Access-Control-Allow-Origin", LIVE_FRONTEND_URL);
+    response.headers.set("Access-Control-Allow-Origin", LIVE_FRONTEND_URL); // FIXED
     return response;
   } catch (err: any) {
     console.error("Regenerate Image API error:", err);
@@ -118,7 +113,7 @@ export async function POST(req: Request) {
       { error: err.message || "Imagen 3 refine failed" },
       { status: 500 }
     );
-    errorResponse.headers.set("Access-Control-Allow-Origin", LIVE_FRONTEND_URL);
+    errorResponse.headers.set("Access-Control-Allow-Origin", LIVE_FRONTEND_URL); // FIXED
     return errorResponse;
   }
 }

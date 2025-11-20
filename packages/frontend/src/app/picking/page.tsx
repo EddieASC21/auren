@@ -1,11 +1,11 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import Image from 'next/image'
 import { getPriceDetails } from '../../lib/pricingData'
-import { nanoid } from 'nanoid'
+import { nanoid } from 'nanoid' // 1. Import nanoid
 
 interface Product {
   id: number
@@ -18,6 +18,7 @@ interface Product {
 export default function PickPage() {
   const router = useRouter()
   const [selectedCategory, setSelectedCategory] = useState('mens')
+  // const [selectedProduct, setSelectedProduct] = useState<number | null>(null)
 
   const categories = ['mens', 'womens', 'other items']
 
@@ -68,39 +69,49 @@ export default function PickPage() {
     { id: 38, name: 'Sock Outer', image: '/other/sock outer side.png', category: 'other items' },
     { id: 39, name: 'Sock Inner', image: '/other/sock inner side.png', category: 'other items' },
   ].map((p) => {
-    const priceDetails = getPriceDetails(p.category, p.name, 1, false)
-
+    const priceDetails = getPriceDetails(p.category, p.name)
     return {
       ...p,
-      price: priceDetails ? `$${priceDetails.unitPrice.toFixed(2)}` : null,
+      price: priceDetails ? `$${priceDetails.base.toFixed(2)}` : null,
     }
   })
 
-  const products = allProducts.filter((product) => product.category === selectedCategory)
+  const products = allProducts.filter(product => product.category === selectedCategory)
+
+  // Reset selected product when category changes
+  /*useEffect(() => {
+    setSelectedProduct(null)
+  }, [selectedCategory])
+
+  const handleNext = () => {
+    if (selectedProduct !== null) {
+      const product = allProducts.find(p => p.id === selectedProduct)
+      if (product) {
+        // Navigate to design page with product data in URL
+        router.push(`/design?productId=${product.id}&productName=${encodeURIComponent(product.name)}&productImage=${encodeURIComponent(product.image)}&productCategory=${encodeURIComponent(product.category)}`)
+      }
+    }
+  }*/
 
   const handleProductSelect = (product: Product) => {
-    const uniqueId = `${product.id}_${nanoid(6)}`
+    // 2. Generate a unique ID for this specific product selection (e.g. "0_abc123")
+    // This allows multiple items of the same product type (e.g. two T-Shirts) to exist in the cart.
+    const uniqueId = `${product.id}_${nanoid(6)}`;
 
-    router.push(
-      `/design?productId=${uniqueId}&productName=${encodeURIComponent(
-        product.name
-      )}&productImage=${encodeURIComponent(
-        product.image
-      )}&productCategory=${encodeURIComponent(product.category)}`
-    )
+    // 3. Navigate to the design page with the NEW unique ID.
+    // Note: We do NOT need to clear localStorage here. Since the ID is unique, 
+    // the design page will automatically start with a blank state for this specific item.
+    router.push(`/design?productId=${uniqueId}&productName=${encodeURIComponent(product.name)}&productImage=${encodeURIComponent(product.image)}&productCategory=${encodeURIComponent(product.category)}`)
   }
 
   return (
-    // FIX: Added 'flex-col md:flex-row' to make it stack on mobile and split on desktop
-    <main className="flex flex-col md:flex-row min-h-screen">
-
+    <main className="flex min-h-screen">
       {/* Left Panel - Black Background */}
-      {/* FIX: Width is w-full on mobile, w-1/3 on desktop. Added larger padding (p-12) for premium look */}
-      <div className="w-full md:w-1/3 bg-black text-white flex flex-col justify-between p-8 md:p-12 min-h-[40vh] md:min-h-screen">
+      <div className="w-1/3 bg-black text-white flex flex-col justify-between p-8">
         <div className="flex flex-col gap-6">
           {/* Step indicator */}
           <div className="flex flex-col gap-4">
-            <span className="text-gray-400 text-sm tracking-wider uppercase">step 2</span>
+            <span className="text-gray-400 text-sm">step 2</span>
             <div className="flex items-center gap-3">
               <span className="text-white text-2xl font-light">01</span>
               <div className="flex-1 h-1 bg-white/25 rounded-full overflow-hidden">
@@ -112,15 +123,15 @@ export default function PickPage() {
             </div>
           </div>
 
-          {/* Main heading - FIX: Adjusted size to prevent awkward wrapping */}
-          <div className="flex-1 flex items-center py-8 md:py-0">
-            <h1 className="text-5xl md:text-6xl lg:text-7xl font-light leading-tight tracking-tight">
+          {/* Main heading */}
+          <div className="flex-1 flex items-center">
+            <h1 className="text-7xl font-light leading-tight">
               Make it fast
             </h1>
           </div>
 
           {/* Description */}
-          <p className="text-white/80 text-lg leading-relaxed max-w-sm">
+          <p className="text-white text-lg leading-relaxed">
             Our signature ready-made products, customized with your designs.
           </p>
         </div>
@@ -128,7 +139,7 @@ export default function PickPage() {
         {/* Back button */}
         <div>
           <Link href="/catalog">
-            <button className="rounded-lg border border-white/30 px-8 py-3 text-white hover:bg-white hover:text-black transition duration-300">
+            <button className="rounded-lg border border-white px-6 py-3 text-white hover:bg-white/10 transition">
               Back
             </button>
           </Link>
@@ -137,16 +148,14 @@ export default function PickPage() {
 
       {/* Right Panel - Light Beige Background */}
       <div className="flex-1 bg-[#f5f1e8] text-black flex flex-col">
-        <div className="flex-1 p-6 md:p-12 flex flex-col">
+        <div className="flex-1 p-8 flex flex-col">
           {/* Top right label */}
           <div className="flex justify-end mb-8">
-            <span className="text-gray-400 text-xs font-semibold tracking-widest uppercase">
-              WHITE LABEL PRODUCT
-            </span>
+            <span className="text-gray-500 text-sm">WHITE LABEL PRODUCT</span>
           </div>
 
           {/* Product Catalog heading */}
-          <h2 className="text-4xl md:text-5xl font-light mb-8">
+          <h2 className="text-5xl font-light mb-8">
             Product Catalog
           </h2>
 
@@ -156,9 +165,9 @@ export default function PickPage() {
               <button
                 key={category}
                 onClick={() => setSelectedCategory(category)}
-                className={`px-6 py-3 rounded-full border transition-all duration-300 ${selectedCategory === category
-                    ? 'bg-black text-white border-black shadow-lg'
-                    : 'bg-transparent text-black border-black/20 hover:border-black'
+                className={`px-6 py-3 rounded-lg border transition ${selectedCategory === category
+                    ? 'bg-black text-white border-black'
+                    : 'bg-white text-black border-black'
                   }`}
               >
                 {category.charAt(0).toUpperCase() + category.slice(1)}
@@ -168,42 +177,39 @@ export default function PickPage() {
 
           {/* Product grid */}
           <div className="flex-1 overflow-y-auto">
-            {/* The responsive grid fix we discussed */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 pb-12 pr-2">
-              {products.map((product) => (
+            <div className="grid grid-cols-3 gap-4">
+              {products.map((product, index) => (
                 <div
                   key={product.id}
-                  onClick={() => handleProductSelect(product)}
-                  className="group rounded-xl border border-black/10 p-4 cursor-pointer transition-all duration-300 bg-white hover:shadow-xl hover:-translate-y-1"
+                  onClick={() => handleProductSelect(product)} // --- THIS LINE CHANGED ---
+                  className={`rounded-lg border border-black p-6 cursor-pointer transition bg-white hover:bg-gray-200`} // --- THIS LINE CHANGED ---
                 >
+
                   {/* Product image */}
-                  <div className="aspect-square bg-gray-50 rounded-lg mb-4 flex items-center justify-center overflow-hidden relative">
+                  <div className="h-48 bg-gray-100 rounded-lg mb-4 flex items-center justify-center overflow-hidden">
                     <Image
                       src={product.image}
                       alt={product.name}
-                      width={240}
-                      height={240}
-                      className="object-contain w-full h-full p-4 transition-transform duration-500 group-hover:scale-110"
+                      width={200}
+                      height={200}
+                      className="object-contain w-full h-full"
                       unoptimized
                     />
                   </div>
 
-                  {/* Product info */}
-                  <div className="px-1">
-                    <p className="text-black text-base font-medium">
-                      {product.name}
-                    </p>
-                    {product.price && (
-                      <p className="text-gray-500 text-sm mt-1">
-                        From {product.price}
-                      </p>
-                    )}
-                  </div>
+                  {/* Product name */}
+                  <p className="text-black text-sm font-medium">
+                    {product.name}
+                  </p>
+                  {product.price && (
+                    <p className="text-gray-500 text-sm mt-1">From {product.price}</p>
+                  )}
                 </div>
               ))}
             </div>
           </div>
         </div>
+
       </div>
     </main>
   )
