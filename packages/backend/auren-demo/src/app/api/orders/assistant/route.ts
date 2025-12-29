@@ -1,38 +1,22 @@
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import { NextResponse } from "next/server";
 import { db } from "@/lib/firestore";
+import { getAuthenticatedUser } from "@/lib/auth";
 
-// ---------------- CORS HELPERS ----------------
-function setCORSHeaders(res: NextResponse) {
-  res.headers.set("Access-Control-Allow-Origin", "*"); // Replace * with your domain later
-  res.headers.set("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-  res.headers.set("Access-Control-Allow-Headers", "Content-Type, Authorization");
-  return res;
-}
-
-export async function OPTIONS() {
-  const res = NextResponse.json({}, { status: 200 });
-  return setCORSHeaders(res);
-}
-
-// ---------------- MAIN ROUTE ----------------
+// AI-powered order assistant endpoint using Google Gemini for order confirmation
 export async function POST(req: Request) {
   try {
-    // 🧾 Parse request body (now includes full chat history)
-    const { chatHistory = [], userMsg, draftId } = await req.json();
-    if (!userMsg || typeof userMsg !== "string") {
-      const res = NextResponse.json({ error: "Missing userMsg" }, { status: 400 });
-      return setCORSHeaders(res);
+    // 🧠 Authenticate user
+    const user = await getAuthenticatedUser();
+    if (!user) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const now = new Date().toISOString();
-
-    // 🧠 Guest user (auth skipped for now)
-    const user = {
-      userId: "guest",
-      email: "guest@auren.ai",
-      name: "Guest User",
-    };
+    // 🧾 Parse body
+    const { prompt, draftId } = await req.json();
+    if (!prompt || typeof prompt !== "string") {
+      return NextResponse.json({ error: "Missing prompt" }, { status: 400 });
+    }
 
     // 🤖 Initialize Gemini
     const genAI = new GoogleGenerativeAI(process.env.GOOGLE_API_KEY!);
@@ -44,101 +28,92 @@ export async function POST(req: Request) {
       },
     });
 
-    // 🪄 System prompt — context aware
+    // 🪄 System prompt for structured output
     const systemPrompt = `
-You are an **order assistant** for a fashion customization company called Auren.
-You help customers finalize their clothing orders by asking about sizes, materials, embroidery, or delivery.
-Keep replies friendly, concise, and natural.
-If sizes have already been provided, acknowledge them — do **not** ask again.
-If materials or colors are mentioned, continue the conversation based on that.
-Always return JSON:
-{
-  "reply": "friendly response to display to the user"
-}
+You are an **order assistant** for a fashion customization company.
+You confirm order details and return structured JSON as shown in the example.
 `;
 
-    // 🧱 Format chat context for Gemini
-    const formattedHistory = [
-      { role: "user", parts: [{ text: systemPrompt }] },
-      ...chatHistory.map((msg: any) => ({
-        role: msg.role === "assistant" ? "model" : "user",
-        parts: [{ text: msg.text }],
-      })),
-      { role: "user", parts: [{ text: userMsg }] },
-    ];
+    // ✨ Generate AI response
+    const result = await model.generateContent({
+      contents: [
+        { role: "user", parts: [{ text: `${systemPrompt}\n\nUser: ${prompt}` }] },
+      ],
+    });
 
-    // ✨ Generate AI reply
-    const result = await model.generateContent({ contents: formattedHistory });
-
-    // Parse Gemini response safely
+    // Parse the AI response
     const raw = result.response.text();
     let data: any;
     try {
       data = JSON.parse(raw);
     } catch {
-      data = { reply: raw || "Got it! How else would you like to customize your order?" };
+      data = { reply: raw || "No AI reply generated.", summary: {} };
     }
 
-    const aiReply = data.reply ?? "Got it!";
-
-    // 🧾 Firestore Transaction — Auto-create draft if missing
+    const aiReply = data.reply ?? "No reply generated.";
+    const summary = data.summary ?? {};
+    const now = new Date().toISOString();
     let confirmedOrderId: string | null = null;
     let originalDraftData: any = null;
 
+    // 🔒 Firestore transaction (atomic)
     await db.runTransaction(async (t) => {
-      const draftRef = db.collection("orders_draft").doc(draftId || "demo-draft-123");
+      if (!draftId) throw new Error("draftId required for transactional write");
+
+      const draftRef = db.collection("orders_draft").doc(draftId);
       const draftSnap = await t.get(draftRef);
+      if (!draftSnap.exists) throw new Error(`Draft with ID ${draftId} not found`);
 
-      if (!draftSnap.exists) {
-        console.warn(`⚠️ Draft ${draftId} not found — creating temporary draft`);
-        const tempDraft = {
-          createdAt: now,
-          status: "in_progress",
-          productName: "Guest Custom Tee",
-          productCategory: "T-Shirt",
-          quantity: 35,
-        };
-        t.set(draftRef, tempDraft);
-        originalDraftData = tempDraft;
-      } else {
-        originalDraftData = draftSnap.data();
-        t.update(draftRef, { status: "finalized" });
-      }
+      originalDraftData = draftSnap.data();
 
-      // Confirmed order creation
+      // Update draft to finalized
+      t.update(draftRef, { status: "finalized" });
+
+      // Create confirmed order
       const confirmedRef = db.collection("orders_confirmed").doc();
       confirmedOrderId = confirmedRef.id;
 
-      t.set(confirmedRef, {
-        draftId: draftId || "demo-draft-123",
+      const orderConfirmed = {
+        draftId,
         aiReply,
+        summary,
         original: originalDraftData,
         createdAt: now,
         status: "confirmed",
+
+        // Attach authenticated user info
         userId: user.userId,
         userEmail: user.email,
-        userName: user.name,
-      });
+        userName: user.name || "",
+      };
+
+      t.set(confirmedRef, orderConfirmed);
     });
 
-    console.log(`✅ Gemini reply (guest):`, aiReply);
+    // 📨 Optional post-transaction (email, webhook, etc.)
+    try {
+      console.log(`📧 Email queued for ${user.email} (draft ${draftId})`);
+      // await sendOrderConfirmationEmail(user.email, summary);
+    } catch (emailErr) {
+      console.warn("Email sending failed (non-blocking):", emailErr);
+    }
 
-    // ✅ Return response
-    const res = NextResponse.json({
+    // ✅ Return success
+    return NextResponse.json({
       id: confirmedOrderId,
-      draftId: draftId || "demo-draft-123",
+      draftId,
       aiReply,
+      summary,
+      original: originalDraftData,
       createdAt: now,
       status: "confirmed",
       user,
     });
-    return setCORSHeaders(res);
   } catch (error: any) {
     console.error("Order Assistant Error:", error);
-    const res = NextResponse.json(
+    return NextResponse.json(
       { error: error.message || "Assistant failed" },
       { status: 500 }
     );
-    return setCORSHeaders(res);
   }
 }

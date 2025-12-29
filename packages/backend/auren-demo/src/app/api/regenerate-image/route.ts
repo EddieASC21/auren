@@ -1,15 +1,6 @@
 import { NextResponse } from "next/server";
 import { GoogleAuth } from "google-auth-library";
 
-// ✅ Handle CORS preflight requests
-export async function OPTIONS() {
-  const response = new NextResponse(null, { status: 204 });
-  response.headers.set("Access-Control-Allow-Origin", "*");
-  response.headers.set("Access-Control-Allow-Methods", "POST, OPTIONS");
-  response.headers.set("Access-Control-Allow-Headers", "Content-Type, Authorization");
-  return response;
-}
-
 // Image regeneration endpoint using Google Vertex AI Imagen 3 for guided regeneration
 export async function POST(req: Request) {
   try {
@@ -18,14 +9,10 @@ export async function POST(req: Request) {
 
     // Validate required parameters
     if (!imageBase64) {
-      const res = NextResponse.json({ error: "Missing imageBase64" }, { status: 400 });
-      res.headers.set("Access-Control-Allow-Origin", "*");
-      return res;
+      return NextResponse.json({ error: "Missing imageBase64" }, { status: 400 });
     }
     if (!suggestion) {
-      const res = NextResponse.json({ error: "Missing suggestion text" }, { status: 400 });
-      res.headers.set("Access-Control-Allow-Origin", "*");
-      return res;
+      return NextResponse.json({ error: "Missing suggestion text" }, { status: 400 });
     }
 
     // Configure Vertex AI Imagen 3
@@ -40,7 +27,7 @@ export async function POST(req: Request) {
     const client = await auth.getClient();
     const token = await client.getAccessToken();
 
-    // 🧠 Imagen-3 guided regeneration
+    // 🧠 Imagen-3 guided regeneration (no editMode)
     const body = {
       instances: [
         {
@@ -55,6 +42,7 @@ export async function POST(req: Request) {
         safetySetting: "block_few",
         includeRaiReason: true,
         language: "auto",
+        // no personGeneration / editMode / watermark here
       },
     };
 
@@ -89,20 +77,15 @@ export async function POST(req: Request) {
       throw new Error("No image returned from Imagen 3 refine");
     }
 
-    // ✅ Include CORS headers in success response
-    const response = NextResponse.json({
+    // Return the regenerated image as a data URL
+    return NextResponse.json({
       imageUrl: `data:image/png;base64,${imageBase64Out}`,
     });
-    response.headers.set("Access-Control-Allow-Origin", "*");
-    return response;
-
   } catch (err: any) {
     console.error("Regenerate Image API error:", err);
-    const errorResponse = NextResponse.json(
+    return NextResponse.json(
       { error: err.message || "Imagen 3 refine failed" },
       { status: 500 }
     );
-    errorResponse.headers.set("Access-Control-Allow-Origin", "*");
-    return errorResponse;
   }
 }
