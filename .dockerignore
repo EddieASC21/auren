@@ -1,6 +1,42 @@
+# Ignore ALL node_modules everywhere
 node_modules
+**/node_modules
+
+# Next.js build output
 .next
+**/.next
+out
+dist
+**/dist
+
+# Turbo monorepo cache
+.turbo
+**/.turbo
+
+# Git (VERY important)
+.git
+.gitignore
+
+# Backend is NOT needed for frontend Docker build
+
+# Env files
 .env
 .env.*
+!.env.example
+
+# Cache & junk
+.DS_Store
 *.log
-**/keys/**
+npm-debug.log
+yarn-debug.log
+pnpm-debug.log
+*.cache
+.cache
+tmp/
+temp/
+
+# Local files not needed
+uploads
+public/uploads
+
+# Other heavy dirs

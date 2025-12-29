@@ -5,32 +5,37 @@ WORKDIR /app
 ARG NEXT_PUBLIC_API_URL
 ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
 
-# Copy only frontend package.json (improves caching)
+# 1. Install Dependencies
+# Copying just the specific package.json is good practice
 COPY packages/frontend/package.json ./
 RUN npm install
 
-# --- FIX 1: Install 'sharp' for Next.js Image Optimization ---
+# 2. Install Sharp (Optional but good for images)
 RUN npm install sharp
 
-# Copy monorepo (for local imports) then build
+# 3. Build Project
 COPY . .
 WORKDIR /app/packages/frontend
 RUN npm run build
 
 # --- Runtime stage ---
-FROM node:20-slim
+FROM node:20-slim AS runner
 WORKDIR /app
 
-# Copy the standalone output
+ENV NODE_ENV=production
+# CRITICAL FIX 1: Bind to 0.0.0.0 (Required for Cloud Run)
+ENV HOSTNAME="0.0.0.0"
+# CRITICAL FIX 2: Match the port to your gcloud command (3000)
+ENV PORT=3000
+
+# CRITICAL FIX 3: Copy Standalone Output
+# This copies 'node_modules' AND 'packages/frontend/server.js' to /app
 COPY --from=builder /app/packages/frontend/.next/standalone ./
-COPY --from=builder /app/packages/frontend/public ./public
-COPY --from=builder /app/packages/frontend/.next/static ./.next/static
 
-# --- FIX 2: Copy node_modules (which now includes 'next' and 'sharp') ---
-COPY --from=builder /app/node_modules ./node_modules
+# CRITICAL FIX 4: Copy Static Assets to the NESTED location
+# The server is at /app/packages/frontend/server.js, so it expects assets relative to that path
+COPY --from=builder /app/packages/frontend/public ./packages/frontend/public
+COPY --from=builder /app/packages/frontend/.next/static ./packages/frontend/.next/static
 
-ENV PORT=8080
-EXPOSE 8080
-
-# The server.js is at the root of the standalone folder
-CMD ["node", "server.js"]
+# CRITICAL FIX 5: Launch the NESTED server file
+CMD ["node", "packages/frontend/server.js"]
