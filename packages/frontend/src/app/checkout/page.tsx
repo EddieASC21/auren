@@ -10,7 +10,7 @@ export default function CheckoutPage() {
     useEffect(() => {
         async function startCheckout() {
             try {
-                const res = await fetch('http://localhost:3001/api/checkout', {
+                const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/checkout`, {
                     method: 'POST',
                     credentials: 'include', // include cookies (for JWT auth)
                 })

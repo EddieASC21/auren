@@ -5,6 +5,7 @@ import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import Image from 'next/image'
 import { getPriceDetails } from '../../lib/pricingData'
+import { nanoid } from 'nanoid' // 1. Import nanoid
 
 interface Product {
   id: number
@@ -17,9 +18,9 @@ interface Product {
 export default function PickPage() {
   const router = useRouter()
   const [selectedCategory, setSelectedCategory] = useState('mens')
-  const [selectedProduct, setSelectedProduct] = useState<number | null>(null)
+  // const [selectedProduct, setSelectedProduct] = useState<number | null>(null)
 
-  const categories = ['mens', 'womens', 'others']
+  const categories = ['mens', 'womens', 'other items']
 
   const allProducts: Product[] = [
     // Mens products
@@ -35,7 +36,7 @@ export default function PickPage() {
     { id: 9, name: 'Sports Shirt', image: '/mens/sports shirt.png', category: 'mens' },
     { id: 10, name: 'Sweatpants', image: '/mens/sweatpants.png', category: 'mens' },
     { id: 11, name: 'Tank Top', image: '/mens/tank top.png', category: 'mens' },
-    
+
     // Womens products
     { id: 12, name: 'T-Shirt', image: '/womens/t shirt.png', category: 'womens' },
     { id: 13, name: 'Polo', image: '/womens/polo.png', category: 'womens' },
@@ -53,20 +54,20 @@ export default function PickPage() {
     { id: 25, name: 'Sports Shorts', image: '/womens/sports shorts.png', category: 'womens' },
     { id: 26, name: 'Sweatpants', image: '/womens/sweatpants.png', category: 'womens' },
     { id: 27, name: 'Tank Top', image: '/womens/tank top.png', category: 'womens' },
-    
+
     // Other products
-    { id: 28, name: 'Backpack', image: '/other/backpack.png', category: 'others' },
-    { id: 29, name: 'Baseball Hat', image: '/other/baseball hat.png', category: 'others' },
-    { id: 30, name: 'Beanie', image: '/other/beanie.png', category: 'others' },
-    { id: 31, name: 'Bottle', image: '/other/bottle front.png', category: 'others' },
-    { id: 32, name: 'Notebook', image: '/other/notebook.png', category: 'others' },
-    { id: 33, name: 'Pen', image: '/other/pen.png', category: 'others' },
-    { id: 34, name: 'Tote Bag', image: '/other/tote bag.png', category: 'others' },
-    { id: 35, name: 'Tumbler', image: '/other/tumbler.png', category: 'others' },
-    { id: 36, name: 'Tumbler Bottle', image: '/other/tumbler bottle.png', category: 'others' },
-    { id: 37, name: 'Mug', image: '/other/mug front.png', category: 'others' },
-    { id: 38, name: 'Sock Outer', image: '/other/sock outer side.png', category: 'others' },
-    { id: 39, name: 'Sock Inner', image: '/other/sock inner side.png', category: 'others' },
+    { id: 28, name: 'Backpack', image: '/other/backpack.png', category: 'other items' },
+    { id: 29, name: 'Baseball Hat', image: '/other/baseball hat.png', category: 'other items' },
+    { id: 30, name: 'Beanie', image: '/other/beanie.png', category: 'other items' },
+    { id: 31, name: 'Bottle', image: '/other/bottle front.png', category: 'other items' },
+    { id: 32, name: 'Notebook', image: '/other/notebook.png', category: 'other items' },
+    { id: 33, name: 'Pen', image: '/other/pen.png', category: 'other items' },
+    { id: 34, name: 'Tote Bag', image: '/other/tote bag.png', category: 'other items' },
+    { id: 35, name: 'Tumbler', image: '/other/tumbler.png', category: 'other items' },
+    { id: 36, name: 'Tumbler Bottle', image: '/other/tumbler bottle.png', category: 'other items' },
+    { id: 37, name: 'Mug', image: '/other/mug front.png', category: 'other items' },
+    { id: 38, name: 'Sock Outer', image: '/other/sock outer side.png', category: 'other items' },
+    { id: 39, name: 'Sock Inner', image: '/other/sock inner side.png', category: 'other items' },
   ].map((p) => {
     const priceDetails = getPriceDetails(p.category, p.name)
     return {
@@ -78,7 +79,7 @@ export default function PickPage() {
   const products = allProducts.filter(product => product.category === selectedCategory)
 
   // Reset selected product when category changes
-  useEffect(() => {
+  /*useEffect(() => {
     setSelectedProduct(null)
   }, [selectedCategory])
 
@@ -90,6 +91,17 @@ export default function PickPage() {
         router.push(`/design?productId=${product.id}&productName=${encodeURIComponent(product.name)}&productImage=${encodeURIComponent(product.image)}&productCategory=${encodeURIComponent(product.category)}`)
       }
     }
+  }*/
+
+  const handleProductSelect = (product: Product) => {
+    // 2. Generate a unique ID for this specific product selection (e.g. "0_abc123")
+    // This allows multiple items of the same product type (e.g. two T-Shirts) to exist in the cart.
+    const uniqueId = `${product.id}_${nanoid(6)}`;
+
+    // 3. Navigate to the design page with the NEW unique ID.
+    // Note: We do NOT need to clear localStorage here. Since the ID is unique, 
+    // the design page will automatically start with a blank state for this specific item.
+    router.push(`/design?productId=${uniqueId}&productName=${encodeURIComponent(product.name)}&productImage=${encodeURIComponent(product.image)}&productCategory=${encodeURIComponent(product.category)}`)
   }
 
   return (
@@ -153,11 +165,10 @@ export default function PickPage() {
               <button
                 key={category}
                 onClick={() => setSelectedCategory(category)}
-                className={`px-6 py-3 rounded-lg border transition ${
-                  selectedCategory === category
+                className={`px-6 py-3 rounded-lg border transition ${selectedCategory === category
                     ? 'bg-black text-white border-black'
                     : 'bg-white text-black border-black'
-                }`}
+                  }`}
               >
                 {category.charAt(0).toUpperCase() + category.slice(1)}
               </button>
@@ -170,28 +181,14 @@ export default function PickPage() {
               {products.map((product, index) => (
                 <div
                   key={product.id}
-                  onClick={() => setSelectedProduct(product.id)}
-                  className={`rounded-lg border border-black p-6 cursor-pointer transition ${
-                    selectedProduct === product.id
-                      ? 'bg-gray-200'
-                      : 'bg-white'
-                  }`}
+                  onClick={() => handleProductSelect(product)} // --- THIS LINE CHANGED ---
+                  className={`rounded-lg border border-black p-6 cursor-pointer transition bg-white hover:bg-gray-200`} // --- THIS LINE CHANGED ---
                 >
-                  {/* Checkmark indicator */}
-                  {selectedProduct === product.id && (
-                    <div className="flex justify-end mb-2">
-                      <div className="w-6 h-6 bg-white rounded-full flex items-center justify-center">
-                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="black" strokeWidth="3">
-                          <path d="M20 6L9 17l-5-5" />
-                        </svg>
-                      </div>
-                    </div>
-                  )}
-                  
+
                   {/* Product image */}
                   <div className="h-48 bg-gray-100 rounded-lg mb-4 flex items-center justify-center overflow-hidden">
-                    <Image 
-                      src={product.image} 
+                    <Image
+                      src={product.image}
                       alt={product.name}
                       width={200}
                       height={200}
@@ -199,7 +196,7 @@ export default function PickPage() {
                       unoptimized
                     />
                   </div>
-                  
+
                   {/* Product name */}
                   <p className="text-black text-sm font-medium">
                     {product.name}
@@ -213,18 +210,7 @@ export default function PickPage() {
           </div>
         </div>
 
-        {/* Next button */}
-        <div className="p-8 border-t border-black/10">
-          <button
-            onClick={handleNext}
-            disabled={selectedProduct === null}
-            className="w-full bg-black text-white rounded-lg px-6 py-4 hover:bg-black/90 transition disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            Next
-          </button>
-        </div>
       </div>
     </main>
   )
 }
-

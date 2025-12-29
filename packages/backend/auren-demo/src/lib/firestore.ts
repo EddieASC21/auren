@@ -29,4 +29,4 @@ function initApp() {
 
 // Initialize the Firebase app and export the Firestore database instance
 const app = initApp();
-export const db = getFirestore(app, "auren");
+export const db = getFirestore(app);

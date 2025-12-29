@@ -10,7 +10,7 @@ export default function VideoBackground() {
         playsInline
         className="absolute top-1/2 left-1/2 min-w-full min-h-full w-auto h-auto -translate-x-1/2 -translate-y-1/2 object-cover"
       >
-        <source src="/auren_3d_rotation.mp4" type="video/mp4" />
+        <source src="https://storage.googleapis.com/auren-public-asset/auren_3d_rotation.mp4" type="video/mp4" />
       </video>
       {/* Subtle overlay for better text readability */}
       <div className="absolute inset-0 bg-black/20" />

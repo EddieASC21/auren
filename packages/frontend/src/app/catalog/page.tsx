@@ -3,8 +3,27 @@
 import { motion } from 'framer-motion'
 import Link from 'next/link'
 import Image from 'next/image'
+import { useRouter } from 'next/navigation'
+
 
 export default function CatalogPage() {
+  const router = useRouter() // 👈 --- ADD THIS HOOK ---
+
+  // 👇 --- ADD THIS HANDLER FUNCTION ---
+  const handleStartAiChat = (e: React.MouseEvent<HTMLAnchorElement>) => {
+    e.preventDefault(); // Stop the <Link> from navigating instantly
+
+    // --- 1. Clear all data from the previous AI session ---
+    if (typeof window !== 'undefined') {
+      localStorage.removeItem('aiChat_chatHistory');
+      localStorage.removeItem('aiChat_selectedImage');
+      localStorage.removeItem('designData_ai-generated'); // Clear the final design too
+    }
+
+    // --- 2. Now, navigate to the chat-box ---
+    router.push('/chat-box');
+  }
+
   return (
     <main
       className="relative min-h-screen text-white overflow-hidden"
@@ -30,15 +49,17 @@ export default function CatalogPage() {
       </div>
 
       {/* Main layout */}
+      {/* Main layout */}
       <div className="mx-auto max-w-[1280px] px-6 w-full">
-        <div className="min-h-screen flex items-center">
-          <div className="grid w-full items-center gap-12 lg:gap-16 lg:grid-cols-2">
+        {/* 1. REMOVED items-center and ADDED pt-48 to push all content down */}
+        <div className="min-h-screen flex pt-48">
+          {/* 2. CHANGED items-center to items-start to align both columns to the top */}
+          <div className="grid w-full items-start gap-12 lg:gap-16 lg:grid-cols-2">
             {/* Left: Title block */}
             <div className="max-w-xl">
-              <h1 className="text-[clamp(36px,6vw,64px)] font-extrabold leading-tight">
-                Ready to start <br /> your brand?
+              <h1 className="text-[clamp(36px,6vw,64px)] font-light leading-tight">
+                Let's make your <br /> custom products! 
               </h1>
-              <p className="mt-4 text-xl text-white/85">with auren</p>
             </div>
 
             {/* Right: Cards */}
@@ -64,16 +85,20 @@ export default function CatalogPage() {
                   </div>
 
                   <div className="flex flex-col items-center justify-center px-8 mt-2 text-center">
-                    <Image
-                      src="/Subtract.png"
-                      alt="Catalog"
-                      width={56}
-                      height={56}
-                      className="opacity-70 mb-4 group-hover:opacity-100 transition-opacity"
-                    />
-                    <h2 className="text-3xl font-bold mb-2">Make it fast</h2>
+                    {/* --- ALIGNMENT FIX: Added fixed-height wrapper --- */}
+                    <div className="h-16 w-16 flex items-center justify-center mb-4">
+                      <Image
+                        src="/Subtract.png"
+                        alt="Catalog"
+                        width={56}
+                        height={56}
+                        className="opacity-70 group-hover:opacity-100 transition-opacity"
+                      />
+                    </div>
+                    {/* --- TEXT FIX: Updated text and font --- */}
+                    <h2 className="text-3xl font-bold mb-2">Catalog</h2>
                     <p className="text-white/60 text-sm">
-                      Ready-to-set and customizable apparel &amp; more.
+                      Browse our catalog for basic apparel &amp; more.
                     </p>
                   </div>
 
@@ -83,7 +108,7 @@ export default function CatalogPage() {
                         <svg className="w-4 h-4 mr-2" fill="currentColor" viewBox="0 0 20 20">
                           <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd"/>
                         </svg>
-                        Quick Turnarounds
+                        Best prices & low minimums
                       </li>
                       <li className="flex items-center text-white/90">
                         <svg className="w-4 h-4 mr-2" fill="currentColor" viewBox="0 0 20 20">
@@ -97,7 +122,7 @@ export default function CatalogPage() {
               </Link>
 
               {/* White card */}
-              <Link href="/chat-box" className="shrink-0">
+              <Link href="/chat-box" className="shrink-0" onClick={handleStartAiChat}>
                 <motion.div
                   className="relative w-[340px] h-[520px] sm:w-[360px] sm:h-[540px] bg-white border border-white/30 rounded-xl cursor-pointer shadow-2xl overflow-hidden group backdrop-blur"
                   whileHover={{ scale: 1.03 }}
@@ -112,13 +137,17 @@ export default function CatalogPage() {
                   </div>
 
                   <div className="flex flex-col items-center justify-center px-8 mt-2 text-center">
-                    <svg width="56" height="56" viewBox="0 0 64 64" fill="none" className="mb-4 opacity-70 group-hover:opacity-100 transition-opacity">
-                      <path d="M20 20h24v24H20z" stroke="gray" strokeWidth="2" fill="none"/>
-                      <circle cx="32" cy="32" r="8" stroke="gray" strokeWidth="2" fill="none"/>
-                    </svg>
-                    <h2 className="text-3xl font-bold text-gray-800 mb-2">Make it Custom</h2>
+                    {/* --- ALIGNMENT FIX: Added fixed-height wrapper --- */}
+                    <div className="h-16 w-16 flex items-center justify-center mb-4">
+                      <svg width="56" height="56" viewBox="0 0 64 64" fill="none" className="opacity-70 group-hover:opacity-100 transition-opacity">
+                        <path d="M20 20h24v24H20z" stroke="gray" strokeWidth="2" fill="none" />
+                        <circle cx="32" cy="32" r="8" stroke="gray" strokeWidth="2" fill="none" />
+                      </svg>
+                    </div>
+                    {/* --- TEXT FIX: Updated text and font --- */}
+                    <h2 className="text-3xl font-bold text-gray-800 mb-2">Custom</h2>
                     <p className="text-gray-600 text-sm">
-                      Products designed from the ground up.
+                      Design any custom product from scratch
                     </p>
                   </div>
 
@@ -128,13 +157,13 @@ export default function CatalogPage() {
                         <svg className="w-4 h-4 mr-2 text-black" fill="currentColor" viewBox="0 0 20 20">
                           <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd"/>
                         </svg>
-                        Total Creative Freedom
+                        Fully customizable
                       </li>
                       <li className="flex items-center text-gray-800">
                         <svg className="w-4 h-4 mr-2 text-black" fill="currentColor" viewBox="0 0 20 20">
                           <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd"/>
                         </svg>
-                        Transparent Pricing
+                        Transparent pricing
                       </li>
                     </ul>
                   </div>

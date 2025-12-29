@@ -40,3 +40,7 @@ Thumbs.db
 *.swp
 *.swo
 
+
+# secrets
+**/keys/
+**/gcp-key.json

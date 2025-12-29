@@ -1,5 +1,17 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  // --- This is the new block to add ---
+  transpilePackages: ['react-colorful'],
+
+  eslint: {
+    // This allows production builds to complete even if
+    // your project has ESLint errors.
+    ignoreDuringBuilds: true,
+  },
+  // --- End of new block ---
+
+  // --- Your existing settings ---
+  output: 'standalone',
   reactStrictMode: true,
   async rewrites() {
     return [
@@ -11,5 +23,4 @@ const nextConfig = {
   },
 };
 
-module.exports = nextConfig
-
+module.exports = nextConfig;

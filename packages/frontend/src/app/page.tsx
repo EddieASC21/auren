@@ -42,9 +42,9 @@ export default function Home() {
           className="relative z-10 text-center max-w-6xl px-8"
         >
           <h1 className="text-6xl md:text-8xl font-light text-white mb-6 leading-tight">
-            Make it here.
+            Create custom
             <br />
-            Share it everywhere.
+            products with ease
           </h1>
           
           <motion.p
@@ -53,9 +53,7 @@ export default function Home() {
             transition={{ duration: 0.8, delay: 0.3 }}
             className="text-white/80 text-xl md:text-2xl mb-12 font-light"
           >
-            Auren turns your ideas into products,
-            <br />
-            ready to ship and sell.
+            Competitve pricing. Premium Quality. Delivered to your door.
           </motion.p>
 
           <motion.div
@@ -95,7 +93,44 @@ export default function Home() {
       </section>
 
 
+      {/* --- NEW VIDEO SECTION --- */}
+      <section className="relative h-screen overflow-hidden bg-black">
+        <video
+          className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 min-w-full min-h-full object-cover z-10"
+          playsInline
+          muted
+          autoPlay
+          loop // Added loop for this new video
+          preload="metadata"
+        >
+          <source src="https://storage.googleapis.com/auren-public-asset/AUREN_CREME.mp4" type="video/mp4" />
+        </video>
 
+        {/* Overlay Content */}
+        <div className="relative z-20 h-full flex flex-col items-center justify-center bg-black/30 px-6 lg:px-8">
+          <motion.div
+            initial={{ opacity: 0, y: 30 }}
+            whileInView={{ opacity: 1, y: 0 }}
+            viewport={{ once: true }}
+            transition={{ duration: 0.8 }}
+            className="max-w-4xl text-center"
+          >
+            <h2 className="text-4xl font-light tracking-tight text-white sm:text-6xl mb-12">
+              We work directly with vetted factories to get you the best quality at the best prices
+            </h2>
+
+            <Link href="/catalog">
+              <button
+                type="button"
+                className="glass-button px-8 py-4 text-lg font-semibold text-white transition hover:bg-white/20"
+              >
+                Contact Us
+              </button>
+            </Link>
+
+          </motion.div>
+        </div>
+      </section>
 
 
       {/* Section 6: Get Started - Video Introduction */}
@@ -106,8 +141,9 @@ export default function Home() {
           muted
           autoPlay
           preload="metadata"
+          loop
         >
-          <source src="/auren_scroll.mp4" type="video/mp4" />
+          <source src="https://storage.googleapis.com/auren-public-asset/auren-design.mp4" type="video/mp4" />
         </video>
         
         {/* Overlay */}
@@ -177,27 +213,7 @@ export default function Home() {
         </div>
       </section>
 
-      {/* Section 8: Start Making - Image Section */}
-      <section className="relative h-screen bg-black">
-        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-3/4 h-3/4 z-10 pointer-events-none">
-          <Image
-            src="/Screenshot 2025-10-27 150915.png"
-            alt="Abstract 3D object"
-            fill
-            className="object-contain"
-          />
-        </div>
-        
-        {/* Clickable Overlay */}
-        <div className="absolute inset-0 z-30 flex items-center justify-center cursor-pointer">
-          <Link href="/catalog">
-            <button className="glass-button px-8 py-4 text-lg font-semibold text-white transition hover:bg-white/20">
-              Start Making
-            </button>
-          </Link>
-        </div>
-      </section>
-
+  
       {/* Section 9: Final CTA with Video */}
       <section className="relative h-screen overflow-hidden">
         {/* Video Background */}
@@ -209,7 +225,7 @@ export default function Home() {
           loop
           preload="metadata"
         >
-          <source src="/auren_3d_rotate_cube.mp4" type="video/mp4" />
+          <source src="https://storage.googleapis.com/auren-public-asset/auren_3d_rotate_cube.mp4" type="video/mp4" />
         </video>
 
         {/* Overlay Content */}
@@ -221,17 +237,15 @@ export default function Home() {
             transition={{ duration: 0.8 }}
             className="max-w-4xl text-center"
           >
-            <h2 className="text-4xl font-bold tracking-tight text-white sm:text-6xl mb-12">
+            <h2 className="text-4xl font-light tracking-tight text-white sm:text-6xl mb-12">
               Get Started with Auren
             </h2>
             
-            {/* Contact Us Button */}
-            <button
-              type="button"
-              className="glass-button px-8 py-4 text-lg font-semibold text-white transition hover:bg-white/20"
-            >
-              Contact Us
-            </button>
+            <Link href="/catalog">
+              <button className="px-12 py-4 text-white text-base font-light bg-white/10 backdrop-blur-xl border border-white/20 rounded-full hover:bg-white/15 transition-all duration-300">
+                Get Started
+              </button>
+            </Link>
           </motion.div>
         </div>
       </section>
