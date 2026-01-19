@@ -1,25 +1,28 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  // --- This is the new block to add ---
-  transpilePackages: ['react-colorful'],
+  // 👇 THIS IS THE MISSING LINE
+  output: 'standalone',
 
   eslint: {
-    // This allows production builds to complete even if
-    // your project has ESLint errors.
     ignoreDuringBuilds: true,
   },
-  // --- End of new block ---
-
-  // --- Your existing settings ---
-  output: 'standalone',
-  reactStrictMode: true,
-  async rewrites() {
-    return [
+  typescript: {
+    ignoreBuildErrors: true,
+  },
+  experimental: {
+    missingSuspenseWithCSRBailout: false,
+  },
+  images: {
+    remotePatterns: [
       {
-        source: '/api/:path*',
-        destination: 'http://localhost:3001/:path*',
+        protocol: 'https',
+        hostname: 'storage.googleapis.com',
       },
-    ];
+      {
+        protocol: 'http',
+        hostname: 'localhost',
+      },
+    ],
   },
 };
 

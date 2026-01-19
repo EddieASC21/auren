@@ -40,5 +40,13 @@ Thumbs.db
 *.swp
 *.swo
 
+<<<<<<< HEAD
+
+# secrets
+**/keys/
+**/gcp-key.json
+=======
 *.mp4
 
+>>>>>>> 63ad1c7 (deployed)
+*.mp4
