@@ -1,998 +1,882 @@
+// packages/frontend/src/app/order-quantity/page.tsx
+
 'use client'
 
-import { motion } from 'framer-motion'
-import { useState, useEffect, Suspense, useRef, useMemo } from 'react'
-import Link from 'next/link'
-import { useSearchParams, useRouter } from 'next/navigation'
-import { getPriceDetails } from '../../lib/pricingData'
-import { db } from '@/lib/db'
+import { Suspense, useEffect, useMemo, useState } from 'react'
+import { useNavigationParams } from '@/hooks/useNavigationParams'
+import { useCleanNavigation } from '@/hooks/useCleanNavigation'
 
-// --- Types for saved design reconstruction ---
-type UploadedImg = {
-  id: number
-  src: string
-  x: number
-  y: number
-  width: number
-  height: number
-  rotation: number
-}
+import { StepHeader } from './components/StepHeader'
+import { PreviewCard } from './components/PreviewCard'
+import { QuantityCard } from './components/QuantityCard'
+import { NextButton } from './components/NextButton'
+import { OrderQuantitySkeleton } from '@/components/ui/LoadingSkeleton'
+import { db, saveOrder, getOrder } from '@/lib/db'
+import { BACKGROUND_IMAGE } from '@/lib/cdn-assets'
 
-type TextEl = {
-  id: number
-  text: string
-  x: number
-  y: number
-  fontSize: number
-  fontFamily: string
-  fontWeight: string
-  fontStyle: string
-  scale: number
-  color: string
-  rotation: number
-}
+import { useProductMeta } from './hooks/useProductMeta'
+import { useDesignVisuals } from './hooks/useDesignVisuals'
+import { useCustomPricingFlag } from './hooks/useCustomPricingFlag'
+import { usePricing } from './hooks/usePricing'
+import { useOrderData } from './hooks/useOrderData'
+import { useOrderPersistence } from './hooks/useOrderPersistence'
+import { useOrderValidation } from './hooks/useOrderValidation'
+import { useOrderAssistant } from './hooks/useOrderAssistant'
+import { useDesignSessionId } from './hooks/useDesignSessionId'
 
-type DesignData = {
-  productImage: string | null
-  frontUploadedImages: UploadedImg[]
-  backUploadedImages: UploadedImg[]
-  frontTextElements: TextEl[]
-  backTextElements: TextEl[]
-  isViewingBack: boolean
-  canvasWidth: number
-  canvasHeight: number
-  selectedProductId?: string
-  selectedProductName?: string
-  selectedProductCategory?: string
-  productColor: string
-  frontMask: string | null
-  backMask: string | null
-  isCustomProduct?: boolean
-  fromChat?: boolean
-}
+import {
+  getPreviewImage,
+  derivePricingKeys,
+  resolveMaskedPreview,
+  buildVariantPath,
+  resolveCatalogProductImage,
+} from './utils'
 
 function OrderQuantityContent() {
-  const searchParams = useSearchParams()
-  const router = useRouter()
+  const navParams = useNavigationParams()
+  const { navigate } = useCleanNavigation()
 
-  const storageId =
-    searchParams.get('cartItemId') || searchParams.get('productId') || ''
+  const storageId = navParams.cartItemId || navParams.productId || ''
+  const fromChat = navParams.fromChat ?? false
 
-  const [quantity, setQuantity] = useState(35)
-  const [productData, setProductData] = useState({
-    productId: '',
-    productName: '',
-    productImage: '',
-    productCategory: '',
-  })
-  const [unitPrice, setUnitPrice] = useState(0)
-  const [totalCost, setTotalCost] = useState(0)
-  const [isCustomProduct, setIsCustomProduct] = useState(false)
-  const [comments, setComments] = useState(
-    'For sizes I want 20 small, 10 medium, and 15 large.'
-  )
-
-  const [designData, setDesignData] = useState<DesignData | null>(null)
-
-  // ONLY final notes from user (e.g., special instructions)
-  const [orderNotes, setOrderNotes] = useState('')
-
-  // ONLY the parsed sizes / confirmed text from AI
-  const [sizeBreakdownText, setSizeBreakdownText] = useState('')
-
-  const [awaitingComments, setAwaitingComments] = useState(false)
+  const { productData, isOneSizeCategory } = useProductMeta(navParams)
+  const [debugEnabled, setDebugEnabled] = useState(false)
   const [isViewingBackPreview, setIsViewingBackPreview] = useState(false)
+  const [resolvedProductImage, setResolvedProductImage] = useState('')
 
-  const [frontSnapshot, setFrontSnapshot] = useState<string | null>(null)
-  const [backSnapshot, setBackSnapshot] = useState<string | null>(null)
-  const [isOneSizeCategory, setIsOneSizeCategory] = useState(false)
-
-  const fromChat = searchParams.get('fromChat') === 'true'
-
-  // track design session so chat-box can restore the same Firestore conversation
-  const [designSessionId, setDesignSessionId] = useState<string | null>(null)
-
-  // -----------------------------------------------------------------
-  // AI ASSISTANT LOGIC
-  // -----------------------------------------------------------------
-  const [chatInput, setChatInput] = useState('')
-  const [chatHistory, setChatHistory] = useState<
-    { role: 'user' | 'assistant'; text: string }[]
-  >([
-    {
-      role: 'assistant',
-      text:
-        'Hello! Let’s figure out how many of each size you need and any notes we should add to your order. ' +
-        'You can type something like “20 S, 10 M, 5 L” or ask for help.',
-    },
-  ])
-  const [isChatLoading, setIsChatLoading] = useState(false)
-  const chatContainerRef = useRef<HTMLDivElement>(null)
-
-  const [isLoaded, setIsLoaded] = useState(false)
-
-  // load designSessionId from URL or localStorage (set by chat-box)
+  // Early preload of snapshot to improve LCP - runs before anything else
   useEffect(() => {
-    if (typeof window === 'undefined') {
-      return
-    }
+    if (typeof window === 'undefined' || !storageId) return
 
-    const fromUrl = searchParams.get('designSessionId')
-
-    if (fromUrl) {
-      setDesignSessionId(fromUrl)
-      return
-    }
-
-    try {
-      // read the same key chat-box uses
-      const globalSession = localStorage.getItem('aiChat_sessionId')
-      if (globalSession) {
-        setDesignSessionId(globalSession)
-        return
-      }
-
-      // as a fallback, try per-cart mapping from chat-box
-      const sid =
-        searchParams.get('cartItemId') || searchParams.get('productId')
-      if (sid) {
-        const mapped = localStorage.getItem(`design_session_${sid}`)
-        if (mapped) {
-          setDesignSessionId(mapped)
-        }
-      }
-    } catch (e) {
-      console.warn('Could not read design session id in order-quantity', e)
-    }
-  }, [searchParams])
-
-  // Calculate price whenever quantity/product/custom-flag changes
-  useEffect(() => {
-    if (!productData.productCategory || !productData.productName) {
-      return
-    }
-
-    const priceData = getPriceDetails(
-      productData.productCategory,
-      productData.productName,
-      quantity,
-      isCustomProduct
-    )
-
-    if (priceData) {
-      let unit = priceData.unitPrice
-      let total = priceData.totalCost
-
-      // 10% markup when arriving from chat-box
-      if (fromChat) {
-        unit = unit * 1.1
-        total = unit * quantity
-      }
-
-      setUnitPrice(unit)
-      setTotalCost(total)
-    }
-  }, [
-    quantity,
-    productData.productCategory,
-    productData.productName,
-    isCustomProduct,
-    fromChat,
-  ])
-
-  // Auto-scroll to bottom of chat
-  useEffect(() => {
-    if (chatContainerRef.current) {
-      chatContainerRef.current.scrollTop = chatContainerRef.current.scrollHeight
-    }
-  }, [chatHistory])
-
-  // 1. LOAD ALL DATA (Order, Design, Chat)
-  useEffect(() => {
-    if (!storageId || typeof window === 'undefined') {
-      return
-    }
-
-    // A. Load existing order data
-    const savedOrder = localStorage.getItem(`orderData_${storageId}`)
-    if (savedOrder) {
+    // Preload snapshot from localStorage/IndexedDB immediately
+    const preloadSnapshot = async () => {
       try {
-        const parsed = JSON.parse(savedOrder)
-        if (parsed.quantity) {
-          setQuantity(parsed.quantity)
-        }
-        if (parsed.comments) {
-          setComments(parsed.comments)
-        }
-        if (parsed.sizeBreakdownText) {
-          setSizeBreakdownText(parsed.sizeBreakdownText)
-        }
-        if (parsed.orderNotes) {
-          setOrderNotes(parsed.orderNotes)
-        }
-      } catch {
-        // ignore
-      }
-    }
+        // First try localStorage (fastest, synchronous)
+        const cachedFront = localStorage.getItem(`snapshot_preview_front_${storageId}`)
+        if (cachedFront) {
+          // Convert base64 to blob URL for better browser caching
+          if (cachedFront.startsWith('data:image/')) {
+            try {
+              const parts = cachedFront.split(',')
+              const contentType = parts[0].match(/:(.*?);/)?.[1] || 'image/png'
+              const byteString = atob(parts[1])
+              const ab = new ArrayBuffer(byteString.length)
+              const ia = new Uint8Array(ab)
+              for (let i = 0; i < byteString.length; i++) {
+                ia[i] = byteString.charCodeAt(i)
+              }
+              const blob = new Blob([ab], { type: contentType })
+              const blobUrl = URL.createObjectURL(blob)
 
-    // B. If design was just edited, reset this item's order/chat
-    const editFlagKey = `justEdited_${storageId}`
-    const wasJustEdited = localStorage.getItem(editFlagKey)
+              // Preload the blob URL
+              const link = document.createElement('link')
+              link.rel = 'preload'
+              link.as = 'image'
+              link.href = blobUrl
+              link.fetchPriority = 'high'
+              document.head.appendChild(link)
 
-    if (wasJustEdited) {
-      console.log('Design was just edited. Resetting Order & AI for', storageId)
-
-      localStorage.removeItem(editFlagKey)
-      localStorage.removeItem(`orderChatHistory_${storageId}`)
-
-      setSizeBreakdownText('')
-      setComments('')
-      setOrderNotes('')
-
-      const freshOrder = {
-        quantity: 35,
-        comments: '',
-        sizeBreakdownText: '',
-        orderNotes: '',
-        isComplete: false,
-      }
-      localStorage.setItem(`orderData_${storageId}`, JSON.stringify(freshOrder))
-    } else {
-      // C. Normal load: restore chat for this cart item
-      const savedChat = localStorage.getItem(`orderChatHistory_${storageId}`)
-      if (savedChat) {
-        try {
-          const parsedChat = JSON.parse(savedChat)
-          if (Array.isArray(parsedChat) && parsedChat.length > 0) {
-            setChatHistory(parsedChat)
+              // Also trigger browser preload via Image
+              const img = new Image()
+              img.src = blobUrl
+              return
+            } catch {
+              // Fallback to base64 if conversion fails
+            }
           }
-        } catch {
-          // ignore
+
+          // Fallback: preload base64 directly
+          const img = new Image()
+          img.src = cachedFront
+        } else {
+          // Try IndexedDB if not in localStorage
+          const previewAsset = await db.cartAssets.get(`snapshot_preview_front_${storageId}`)
+          if (previewAsset?.base64) {
+            // Same conversion logic for IndexedDB
+            if (previewAsset.base64.startsWith('data:image/')) {
+              try {
+                const parts = previewAsset.base64.split(',')
+                const contentType = parts[0].match(/:(.*?);/)?.[1] || 'image/png'
+                const byteString = atob(parts[1])
+                const ab = new ArrayBuffer(byteString.length)
+                const ia = new Uint8Array(ab)
+                for (let i = 0; i < byteString.length; i++) {
+                  ia[i] = byteString.charCodeAt(i)
+                }
+                const blob = new Blob([ab], { type: contentType })
+                const blobUrl = URL.createObjectURL(blob)
+
+                const link = document.createElement('link')
+                link.rel = 'preload'
+                link.as = 'image'
+                link.href = blobUrl
+                link.fetchPriority = 'high'
+                document.head.appendChild(link)
+
+                const img = new Image()
+                img.src = blobUrl
+              } catch {
+                // Ignore conversion errors
+              }
+            }
+          }
         }
+      } catch (e) {
+        // Ignore errors, this is just a performance optimization
       }
     }
 
-    setIsLoaded(true)
+    preloadSnapshot()
   }, [storageId])
 
-  // 2. SAVE ORDER DATA & CHAT HISTORY ON CHANGE
   useEffect(() => {
-    if (!isLoaded || !storageId || typeof window === 'undefined') {
-      return
+    if (typeof window === 'undefined') return
+    // Defer debug check to avoid blocking main thread
+    const checkDebug = () => {
+      const params = new URLSearchParams(window.location.search)
+      const enabled =
+        params.get('debugOrder') === '1' ||
+        window.localStorage.getItem('debugOrderQuantity') === 'true'
+      setDebugEnabled(enabled)
     }
 
-    let existingComplete = false
-    const existingRaw = localStorage.getItem(`orderData_${storageId}`)
-    if (existingRaw) {
+    if ('requestIdleCallback' in window) {
+      requestIdleCallback(checkDebug)
+    } else {
+      setTimeout(checkDebug, 0)
+    }
+  }, [navParams])
+
+  const [forceSnapshots, setForceSnapshots] = useState(fromChat)
+
+  // ✅ Always load both snapshots to prevent delay when toggling to back view
+  const { frontSnapshot, backSnapshot, designData, isLoaded: visualsLoaded } =
+    useDesignVisuals(storageId, debugEnabled, true, forceSnapshots)
+
+  // ✅ Read hasUserAddedLogo from orderMeta (batched with other reads in useDesignVisuals)
+  const [hasUserAddedLogo, setHasUserAddedLogo] = useState<boolean | null>(null)
+
+  useEffect(() => {
+    if (!storageId) return
+
+    const loadMeta = async () => {
       try {
-        const parsed = JSON.parse(existingRaw)
-        existingComplete = !!parsed.isComplete
-      } catch {
-        // ignore
+        // Check Dexie first (primary source - has fresh data from chat-box)
+        const order = await getOrder(storageId)
+        if (order?.orderMeta) {
+          setHasUserAddedLogo(order.orderMeta.hasUserAddedLogo ?? false)
+          return
+        }
+
+        // Fall back to localStorage (legacy)
+        const metaRaw = localStorage.getItem(`orderMeta_${storageId}`)
+        if (metaRaw) {
+          const meta = JSON.parse(metaRaw)
+          setHasUserAddedLogo(meta.hasUserAddedLogo ?? false)
+          return
+        }
+
+        if (debugEnabled) {
+          console.warn('[order-quantity] No orderMeta found for storageId:', storageId)
+        }
+      } catch (err) {
+        console.error('Failed to read orderMeta:', err)
       }
     }
 
-    const orderData = {
-      quantity,
-      comments,
-      totalCost,
-      unitPrice,
-      sizeBreakdownText,
-      orderNotes,
-      isComplete: existingComplete,
-      fromChat,
-      isCustomProduct,
-    }
+    loadMeta()
+  }, [debugEnabled, storageId])
 
-    localStorage.setItem(`orderData_${storageId}`, JSON.stringify(orderData))
-    localStorage.setItem(
-      `orderChatHistory_${storageId}`,
-      JSON.stringify(chatHistory)
-    )
-  }, [
+  useEffect(() => {
+    if (fromChat) {
+      setForceSnapshots(true)
+      return
+    }
+    if (hasUserAddedLogo === true) {
+      setForceSnapshots(true)
+    }
+  }, [fromChat, hasUserAddedLogo])
+
+  const isCustomProduct = useCustomPricingFlag({
+    navParams,
+    designData,
+    productData,
+  })
+
+  const designSessionId = useDesignSessionId(navParams, storageId)
+
+  const {
+    quantity,
+    setQuantity,
+    comments,
+    setComments,
+    orderNotes,
+    setOrderNotes,
+    sizeBreakdownText,
+    setSizeBreakdownText,
+    chatHistory,
+    setChatHistory,
+    isLoaded,
+  } = useOrderData(storageId)
+
+  // ✅ Pricing now derived from backend quote using stable keys (via designData + productData)
+  const { unitPrice, totalCost } = usePricing({
+    quantity,
+    productData,
+    isCustomProduct,
+    fromChat,
+    designData,
+  })
+
+  useOrderPersistence({
     storageId,
+    isLoaded,
     quantity,
     comments,
     totalCost,
     unitPrice,
     chatHistory,
-    isLoaded,
     sizeBreakdownText,
     orderNotes,
     isCustomProduct,
     fromChat,
+    productData,
+    designData,
+  })
+
+  const {
+    chatInput,
+    setChatInput,
+    isChatLoading,
+    chatContainerRef,
+    handleChatSend,
+    aiApprovedNext,
+  } = useOrderAssistant({
+    designData,
+    productData,
+    quantity,
+    isOneSizeCategory,
+    fromChat,
+    isCustomProduct,
+    storageId,
+    designSessionId,
+
+    chatHistory,
+    setChatHistory,
+
+    comments,
+    setComments,
+
+    orderNotes,
+    setOrderNotes,
+
+    setSizeBreakdownText,
+
+    hasUserAddedLogo: hasUserAddedLogo ?? false, // ✅ Pass logo detection flag from orderMeta
+  })
+
+  const { isOrderValid } = useOrderValidation({
+    isOneSizeCategory,
+    sizeBreakdownText,
+    quantity,
+    aiApprovedNext,
+  })
+
+  const [hasBackBase, setHasBackBase] = useState(false)
+
+  const fallbackCatalogImage = useMemo(
+    () =>
+      resolveCatalogProductImage({
+        productCategory: productData.productCategory,
+        productName: productData.productName,
+        designData,
+      }),
+    [designData, productData.productCategory, productData.productName],
+  )
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+
+    // ✅ When coming from chat-box, don't load catalog product images
+    // The snapshot already contains the complete rendered image
+    if (fromChat) {
+      setResolvedProductImage('')
+      return
+    }
+
+    const candidate =
+      productData.productImage || designData?.productImage || fallbackCatalogImage
+    if (!candidate) {
+      setResolvedProductImage('')
+      return
+    }
+
+    let alive = true
+    const img = new window.Image()
+    img.onload = () => {
+      if (alive) setResolvedProductImage(candidate)
+    }
+    img.onerror = () => {
+      if (!alive) return
+      setResolvedProductImage(fallbackCatalogImage || candidate)
+    }
+    img.src = candidate
+
+    return () => {
+      alive = false
+    }
+  }, [
+    designData?.productImage,
+    fallbackCatalogImage,
+    fromChat,
+    !!frontSnapshot, // ✅ Boolean coercion prevents array size changes
+    !!backSnapshot,  // ✅ Boolean coercion prevents array size changes
+    productData.productImage
   ])
 
-  // UPDATED AI CHAT HANDLER
-  const handleChatSend = async () => {
-    if (!chatInput.trim() || isChatLoading) {
-      return
+  const hasBackUploads = useMemo(() => {
+    return !!designData && (designData.backUploadedImages?.length || 0) > 0
+  }, [designData])
+
+  const hasBackSide = useMemo(() => {
+    if (fromChat) {
+      return Boolean(backSnapshot)
     }
+    return !!backSnapshot || hasBackUploads || hasBackBase
+  }, [backSnapshot, fromChat, hasBackUploads, hasBackBase])
 
-    const userMsg = chatInput
-    setChatInput('')
+  const hasDesignElements = useMemo(() => {
+    if (!designData) return false
+    const hasImages =
+      (designData.frontUploadedImages?.length || 0) > 0 ||
+      (designData.backUploadedImages?.length || 0) > 0
+    const hasText =
+      (designData.frontTextElements?.length || 0) > 0 ||
+      (designData.backTextElements?.length || 0) > 0
+    return hasImages || hasText
+  }, [designData])
 
-    const previousHistory = [...chatHistory]
-    const newHistory = [...chatHistory, { role: 'user' as const, text: userMsg }]
-    setChatHistory(newHistory)
-    setIsChatLoading(true)
+  const hasColorChange = useMemo(() => {
+    const normalized = (designData?.productColor || '').toUpperCase()
+    return Boolean(normalized) && normalized !== '#FFFFFF'
+  }, [designData?.productColor])
 
-    try {
-      const hasImages =
-        !!designData &&
-        ((designData.frontUploadedImages?.length || 0) > 0 ||
-          (designData.backUploadedImages?.length || 0) > 0)
-
-      const hasOverlayDesign =
-        hasImages ||
-        (!!designData &&
-          ((designData.frontTextElements?.length || 0) > 0 ||
-            (designData.backTextElements?.length || 0) > 0))
-
-      // If this is a catalog product coming from chat-box,
-      // treat it as BLANK for the AI assistant
-      const isChatCatalogFlow = fromChat && !isCustomProduct
-      const hasDesign = isChatCatalogFlow ? false : hasOverlayDesign
-
-      // If we were waiting for comments, treat this user message as those comments
-      if (awaitingComments) {
-        setOrderNotes(userMsg)
-        setAwaitingComments(false)
-      }
-
-      // pick the Firestore draft/session id
-      const draftId =
-        designSessionId ||
-        searchParams.get('designSessionId') ||
-        (storageId ? `order_${storageId}` : 'guest_session')
-
-      const res = await fetch(
-        `${process.env.NEXT_PUBLIC_API_URL}/api/orders/assistant`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            userMsg,
-            chatHistory: previousHistory,
-            draftId,
-            context: {
-              quantity,
-              category: productData.productCategory,
-              categoryType: isOneSizeCategory ? 'one-size' : 'sized',
-              productState: hasDesign
-                ? 'Customized with Design'
-                : 'Blank Product (No Print/Embroidery needed)',
-              hasImages,
-              hasDesign,
-              // Prefer final orderNotes if present, otherwise fall back to comments
-              currentComments: orderNotes || comments,
-            },
-          }),
-        }
-      )
-
-      const data = await res.json()
-
-      if (data.aiReply) {
-        const reply = data.aiReply
-
-        setChatHistory((prev) => [...prev, { role: 'assistant', text: reply }])
-
-        // Backend tells us when it parsed a valid breakdown string
-        if (data.validBreakdownText) {
-          setSizeBreakdownText(data.validBreakdownText)
-        }
-
-        // Detect when AI is requesting comments
-        if (reply.toLowerCase().includes('any additional comments')) {
-          setAwaitingComments(true)
-        }
-
-        // If we weren't in "awaiting comments" mode, append AI reply to comments log
-        if (!awaitingComments) {
-          setComments((prev) => `${prev}\nAI: ${reply}`)
-        }
-      }
-    } catch (err: any) {
-      console.error('Assistant error', err)
-      setChatHistory((prev) => [
-        ...prev,
-        {
-          role: 'assistant',
-          text: `⚠️ Error: ${err.message}. (Check console for details)`,
-        },
-      ])
-    } finally {
-      setIsChatLoading(false)
-    }
-  }
-
-  const handleNext = () => {
-    if (!isOrderValid || !storageId) {
-      return
-    }
-
-    const orderData = {
-      quantity,
-      comments,
-      totalCost,
-      unitPrice,
-      sizeBreakdownText,
-      orderNotes,
-      isComplete: true,
-      fromChat,
-      isCustomProduct,
-    }
-    localStorage.setItem(`orderData_${storageId}`, JSON.stringify(orderData))
-
-    router.push('/product-showcase')
-  }
-
-  const hasBackSide =
-    !!backSnapshot || (!!designData && (designData.backUploadedImages?.length || 0) > 0)
-
-  // Load product meta from URL
   useEffect(() => {
-    const productId = searchParams.get('productId')
-    const productName = searchParams.get('productName')
-    const productImage = searchParams.get('productImage')
-    const productCategory = searchParams.get('productCategory')
-
-    if (productId && productName && productCategory) {
-      const decodedCategory = decodeURIComponent(productCategory)
-      const lower = decodedCategory.toLowerCase()
-
-      const oneSize =
-        lower.includes('other') ||
-        lower.includes('accessory') ||
-        lower.includes('gift')
-
-      setProductData({
-        productId,
-        productName: decodeURIComponent(productName),
-        productImage: productImage ? decodeURIComponent(productImage) : '',
-        productCategory: decodedCategory,
-      })
-
-      setIsOneSizeCategory(oneSize)
+    if (hasDesignElements || hasColorChange) {
+      setForceSnapshots(true)
     }
-  }, [searchParams])
+  }, [hasColorChange, hasDesignElements])
 
-  // Load snapshots & design metadata from IndexedDB/localStorage
+  const shouldPreferSnapshots = useMemo(() => {
+    if (fromChat) return true
+    if (hasDesignElements || hasColorChange) return true
+    return hasUserAddedLogo === true
+  }, [fromChat, hasColorChange, hasDesignElements, hasUserAddedLogo])
+
   useEffect(() => {
-    if (typeof window === 'undefined') {
-      return
-    }
-    if (!storageId) {
-      setDesignData(null)
+    if (!resolvedProductImage) {
+      setHasBackBase(false)
       return
     }
 
-    const loadVisuals = async () => {
-      try {
-        const front = await db.cartAssets.get(`snapshot_front_${storageId}`)
-        if (front) {
-          setFrontSnapshot(front.base64)
-        }
-
-        const back = await db.cartAssets.get(`snapshot_back_${storageId}`)
-        if (back) {
-          setBackSnapshot(back.base64)
-        }
-
-        const key = `designData_${storageId}`
-        const raw = localStorage.getItem(key)
-        if (raw) {
-          const d = JSON.parse(raw)
-          setDesignData(d)
-        }
-      } catch (err) {
-        console.warn('Error loading visuals:', err)
+    let alive = true
+    const checkBack = () => {
+      const backImagePath = buildVariantPath(resolvedProductImage, ' back')
+      if (debugEnabled) {
+        
       }
-    }
-
-    loadVisuals()
-  }, [storageId])
-
-  // Optional cleanup of other design/order keys
-  useEffect(() => {
-    if (!storageId || typeof window === 'undefined') {
-      return
-    }
-
-    Object.keys(localStorage).forEach((key) => {
-      if (
-        (key.startsWith('designData_') && key !== `designData_${storageId}`) ||
-        (key.startsWith('orderData_') && key !== `orderData_${storageId}`)
-      ) {
-        // optional cleanup – still commented out
-        // localStorage.removeItem(key)
+      if (!backImagePath || backImagePath === resolvedProductImage) {
+        if (alive) setHasBackBase(false)
+        return
       }
-    })
-  }, [storageId])
+      const img = new window.Image()
+      img.onload = () => {
+        if (debugEnabled) {
+          
+        }
+        if (alive) setHasBackBase(true)
+      }
+      img.onerror = () => {
+        if (debugEnabled) {
+          console.warn('[order-quantity][hasBackBase] ❌ Back image not found:', backImagePath)
+        }
+        if (alive) setHasBackBase(false)
+      }
+      img.src = backImagePath
+    }
 
-  // If there's no back snapshot, force toggle to front
+    checkBack()
+    return () => {
+      alive = false
+    }
+  }, [resolvedProductImage, debugEnabled])
+
   useEffect(() => {
     if (!hasBackSide && isViewingBackPreview) {
       setIsViewingBackPreview(false)
     }
   }, [hasBackSide, isViewingBackPreview])
 
-  // Determine if product is custom vs catalog
+  // Optional cleanup of other design/order keys (deferred to avoid blocking)
   useEffect(() => {
-    const isCustomParam = searchParams.get('isCustom') === 'true'
+    if (!storageId || typeof window === 'undefined') return
 
-    const cat =
-      (designData?.selectedProductCategory || productData.productCategory || '').toLowerCase()
+    // Defer cleanup to idle time to avoid blocking main thread
+    const cleanup = () => {
+      Object.keys(localStorage).forEach((key) => {
+        if (
+          (key.startsWith('designData_') && key !== `designData_${storageId}`) ||
+          (key.startsWith('orderData_') && key !== `orderData_${storageId}`)
+        ) {
+          // optional cleanup – still commented out
+          // localStorage.removeItem(key)
+        }
+      })
+    }
 
-    const implicitCustom = !cat || cat === 'custom' || cat === 'unknown'
+    if ('requestIdleCallback' in window) {
+      const id = requestIdleCallback(cleanup, { timeout: 3000 })
+      return () => cancelIdleCallback(id)
+    } else {
+      const timeout = setTimeout(cleanup, 2000)
+      return () => clearTimeout(timeout)
+    }
+  }, [storageId])
 
-    const shouldUseCustomPricing = isCustomParam || implicitCustom
-    setIsCustomProduct(shouldUseCustomPricing)
-  }, [searchParams, designData, productData.productCategory])
+  const displayImage = useMemo(() => {
+    const result = getPreviewImage({
+      isViewingBack: isViewingBackPreview,
+      hasBackSide,
+      frontSnapshot,
+      backSnapshot,
+      designData,
+      productImage: resolvedProductImage,
+    })
 
-  // Parsing helpers for sizes / quantity validation
-  function computeParsedTotal(parsed: Record<string, number>) {
-    return Object.values(parsed).reduce((a, b) => a + b, 0)
-  }
-
-  function parseSizesFromComments(text: string) {
-    const sizeRegex =
-      /(\d+)\s*(xs|s|sm|small|m|md|medium|l|lg|large|xl|extra large|2xl|xxl)/gi
-    const result: Record<string, number> = {}
-
-    let match
-    while ((match = sizeRegex.exec(text)) !== null) {
-      const count = Number(match[1])
-      const size = match[2].toLowerCase()
-
-      let normalized = size
-      if (['extra small', 'xs'].includes(size)) {
-        normalized = 's'
-      }
-      if (['small', 'sm', 's'].includes(size)) {
-        normalized = 's'
-      }
-      if (['medium', 'md', 'm'].includes(size)) {
-        normalized = 'm'
-      }
-      if (['large', 'lg', 'l'].includes(size)) {
-        normalized = 'l'
-      }
-      if (['extra large', 'xl'].includes(size)) {
-        normalized = 'xl'
-      }
-      if (['2xl', 'xxl'].includes(size)) {
-        normalized = '2xl'
-      }
-
-      result[normalized] = (result[normalized] || 0) + count
+    if (debugEnabled) {
+      
     }
 
     return result
-  }
+  }, [isViewingBackPreview, hasBackSide, frontSnapshot, backSnapshot, designData, resolvedProductImage, debugEnabled])
+  const displayImageIsDataLike = Boolean(
+    displayImage &&
+      (displayImage.startsWith('data:') ||
+        displayImage.startsWith('blob:') ||
+        displayImage.startsWith('dexie:')),
+  )
 
-  function parseOneSizeConfirmedQuantity(text: string) {
-    if (!text) {
-      return 0
+  const maskedPreview = useMemo(
+    () =>
+      resolveMaskedPreview({
+        productImage: resolvedProductImage,
+        designData,
+        isViewingBack: isViewingBackPreview,
+        hasBackBase,
+      }),
+    [designData, hasBackBase, isViewingBackPreview, resolvedProductImage],
+  )
+
+  const activeSnapshot = isViewingBackPreview ? backSnapshot : frontSnapshot
+
+  // Prefer snapshots when a design exists for accurate placement.
+  const usingSnapshots = shouldPreferSnapshots && Boolean(activeSnapshot)
+
+  useEffect(() => {
+    if (!shouldPreferSnapshots || activeSnapshot || !visualsLoaded) return
+    console.warn('[order-quantity][preview] Expected snapshot but none found', {
+      storageId,
+      hasDesignElements,
+      hasColorChange,
+      hasUserAddedLogo,
+      frontSnapshot: frontSnapshot ? frontSnapshot.substring(0, 50) : null,
+      backSnapshot: backSnapshot ? backSnapshot.substring(0, 50) : null,
+      designDataLoaded: Boolean(designData),
+    })
+  }, [
+    activeSnapshot,
+    backSnapshot,
+    frontSnapshot,
+    hasColorChange,
+    hasDesignElements,
+    hasUserAddedLogo,
+    designData,
+    shouldPreferSnapshots,
+    storageId,
+    visualsLoaded,
+  ])
+
+  const compositePreview = useMemo(() => {
+    if (!designData) return null
+    const uploadedImages = isViewingBackPreview
+      ? designData.backUploadedImages || []
+      : designData.frontUploadedImages || []
+    const textElements = isViewingBackPreview
+      ? designData.backTextElements || []
+      : designData.frontTextElements || []
+
+    if (uploadedImages.length === 0 && textElements.length === 0) return null
+
+    return {
+      baseImage: maskedPreview.baseImage || resolvedProductImage,
+      maskSrc: maskedPreview.maskSrc || undefined,
+      color: maskedPreview.color || undefined,
+      uploadedImages,
+      textElements,
+      canvasWidth: designData.canvasWidth,
+      canvasHeight: designData.canvasHeight,
     }
-    const match = text.match(/(\d+)/)
-    if (!match) {
-      return 0
+  }, [
+    designData,
+    isViewingBackPreview,
+    maskedPreview.baseImage,
+    maskedPreview.color,
+    maskedPreview.maskSrc,
+    resolvedProductImage,
+  ])
+
+  const useCompositePreview = useMemo(() => {
+    // ✅ SIMPLIFIED: If using snapshots, never use composite preview
+    // Snapshots are pre-rendered complete images - no need to rebuild layers
+    if (usingSnapshots) {
+      
+      return false
     }
-    return Number(match[1])
-  }
 
-  const parsedSizes = useMemo(
-    () => (!isOneSizeCategory ? parseSizesFromComments(sizeBreakdownText) : {}),
-    [sizeBreakdownText, isOneSizeCategory]
-  )
+    // Only use composite when no snapshot available and we have design elements
+    return !!compositePreview
+  }, [usingSnapshots, compositePreview])
 
-  const parsedTotal = useMemo(
-    () => computeParsedTotal(parsedSizes),
-    [parsedSizes]
-  )
+  // ✅ UPDATED: Use snapshot directly when available
+  const effectiveDisplayImage = usingSnapshots ? activeSnapshot : (useCompositePreview ? null : displayImage)
+  const forceMaskedPreview = displayImageIsDataLike && !compositePreview && !!resolvedProductImage
 
-  const confirmedOneSizeQty = useMemo(
-    () => (isOneSizeCategory ? parseOneSizeConfirmedQuantity(sizeBreakdownText) : null),
-    [sizeBreakdownText, isOneSizeCategory]
-  )
+  const useMaskedPreview = useMemo(() => {
+    // ✅ SIMPLIFIED: If using snapshots, never use masked preview
+    // Snapshots are pre-rendered complete images - no need for mask layers
+    if (usingSnapshots) {
+      
+      return false
+    }
 
-  const isOrderValid = isOneSizeCategory
-    ? confirmedOneSizeQty === quantity
-    : parsedTotal === quantity
+    if (useCompositePreview) return false
 
-  // Choose which snapshot/fallback image to show
-  let displayImage =
-    isViewingBackPreview && hasBackSide ? backSnapshot : frontSnapshot
+    if (forceMaskedPreview) return true
+    const allowMaskedFallback =
+      hasUserAddedLogo === false ||
+      (hasUserAddedLogo !== true && visualsLoaded && !activeSnapshot)
+    if (!allowMaskedFallback) {
+      return false
+    }
 
-  // Fallback for AI → order-quantity path (no snapshots yet)
-  if (!displayImage && designData) {
-    const fallback = isViewingBackPreview
-      ? designData.backUploadedImages?.[0]?.src
-      : designData.frontUploadedImages?.[0]?.src
+    if (!maskedPreview.baseImage || !maskedPreview.maskSrc || !maskedPreview.color) {
+      return false
+    }
+    if (!effectiveDisplayImage) return true
+    if (
+      effectiveDisplayImage.startsWith('data:image/') ||
+      effectiveDisplayImage.startsWith('blob:') ||
+      effectiveDisplayImage.startsWith('dexie:')
+    ) {
+      return false
+    }
+    const normalizedDisplay = effectiveDisplayImage.replace(/%20/g, ' ').replace(/\+/g, ' ')
+    const baseImages = [resolvedProductImage, designData?.productImage].filter(Boolean) as string[]
+    return baseImages.some(
+      (img) => img.replace(/%20/g, ' ').replace(/\+/g, ' ') === normalizedDisplay,
+    )
+  }, [
+    usingSnapshots,
+    designData?.productImage,
+    effectiveDisplayImage,
+    activeSnapshot,
+    hasUserAddedLogo,
+    maskedPreview.baseImage,
+    maskedPreview.color,
+    maskedPreview.maskSrc,
+    resolvedProductImage,
+    forceMaskedPreview,
+    useCompositePreview,
+    visualsLoaded,
+  ])
 
-    displayImage = fallback || null
-  }
+  const prioritizePreview = useMemo(() => {
+    if (useMaskedPreview) return true
+    if (effectiveDisplayImage) return true
+    return hasUserAddedLogo === false
+  }, [effectiveDisplayImage, hasUserAddedLogo, useMaskedPreview])
 
-  const handleEditDesign = () => {
-    const productId = searchParams.get('productId') ?? ''
-    const cartItemId = searchParams.get('cartItemId') ?? productId
-    const productName = searchParams.get('productName') ?? ''
-    const productCategory = searchParams.get('productCategory') ?? ''
-    const productImage = searchParams.get('productImage') ?? ''
-    const isCustom = searchParams.get('isCustom') ?? 'false'
+  // Preload the most critical preview image for faster LCP
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    if (!effectiveDisplayImage || !prioritizePreview) return
+
+    // Only preload static images, not data/blob URLs
+    if (
+      effectiveDisplayImage.startsWith('data:') ||
+      effectiveDisplayImage.startsWith('blob:') ||
+      effectiveDisplayImage.startsWith('dexie:')
+    ) {
+      return
+    }
+
+    const link = document.createElement('link')
+    link.rel = 'preload'
+    link.as = 'image'
+    link.href = effectiveDisplayImage
+    link.fetchPriority = 'high'
+    document.head.appendChild(link)
+
+    return () => {
+      if (document.head.contains(link)) {
+        document.head.removeChild(link)
+      }
+    }
+  }, [effectiveDisplayImage, prioritizePreview])
+
+  useEffect(() => {
+    if (!useMaskedPreview) return
+    const maskSrc = maskedPreview.maskSrc
+    if (typeof window === 'undefined') return
+    const shouldPrefetch = (src: string) =>
+      src && !src.startsWith('data:') && !src.startsWith('blob:')
+
+    // Defer prefetch to idle time to avoid blocking critical rendering
+    const prefetchImage = () => {
+      const links: HTMLLinkElement[] = []
+      if (maskSrc && shouldPrefetch(maskSrc)) {
+        const link = document.createElement('link')
+        link.rel = 'prefetch'
+        link.as = 'image'
+        link.href = maskSrc
+        links.push(link)
+        document.head.appendChild(link)
+      }
+      return links
+    }
+
+    if ('requestIdleCallback' in window) {
+      const id = requestIdleCallback(() => {
+        const links = prefetchImage()
+        return () => {
+          links.forEach((link) => {
+            if (document.head.contains(link)) {
+              document.head.removeChild(link)
+            }
+          })
+        }
+      })
+      return () => cancelIdleCallback(id)
+    } else {
+      const links = prefetchImage()
+      return () => {
+        links.forEach((link) => {
+          if (document.head.contains(link)) {
+            document.head.removeChild(link)
+          }
+        })
+      }
+    }
+  }, [maskedPreview.baseImage, maskedPreview.maskSrc, useMaskedPreview])
+
+  useEffect(() => {
+    if (!debugEnabled) return
+    if (effectiveDisplayImage) {
+      
+      return
+    }
+
+    console.warn('[order-quantity][preview] No display image found', {
+      storageId,
+      isViewingBackPreview,
+      hasBackSide,
+      hasBackBase,
+      hasBackUploads,
+      frontSnapshot: frontSnapshot ? frontSnapshot.substring(0, 50) : null,
+      backSnapshot: backSnapshot ? backSnapshot.substring(0, 50) : null,
+      designData: Boolean(designData),
+      frontUploads: designData?.frontUploadedImages?.length || 0,
+      backUploads: designData?.backUploadedImages?.length || 0,
+      productImage: productData.productImage || null,
+      resolvedProductImage: resolvedProductImage || null,
+    })
+  }, [
+    backSnapshot,
+    debugEnabled,
+    designData,
+    effectiveDisplayImage,
+    frontSnapshot,
+    hasBackSide,
+    hasBackBase,
+    hasBackUploads,
+    isViewingBackPreview,
+    productData.productImage,
+    resolvedProductImage,
+    storageId,
+  ])
+
+  const handleEditDesign = async () => {
+    const productId = navParams.productId ?? ''
+    const cartItemId = navParams.cartItemId ?? productId
+    const productName = navParams.productName ?? ''
+    const productCategory = navParams.productCategory ?? ''
+    const productImage = navParams.productImage ?? ''
+    const isCustom = navParams.isCustom ?? false
+
+    // ✅ Set reset flag so chat resets when returning to order-quantity
+    if (typeof window !== 'undefined' && storageId) {
+      const resetPayload = { t: Date.now(), reason: 'edit-from-order-quantity' }
+      localStorage.setItem(`orderChatReset_${storageId}`, JSON.stringify(resetPayload))
+      // Also save to Dexie (where useOrderData checks)
+      await saveOrder(storageId, { resetPayload })
+    }
 
     if (fromChat) {
-      const params = new URLSearchParams({
-        productId,
-        productName,
-        productCategory,
-        isCustom,
-        fromOrderQuantity: 'true',
-      })
-
-      if (productImage) {
-        params.set('productImage', productImage)
-      }
-
-      if (designSessionId) {
-        params.set('designSessionId', designSessionId)
-      }
-
-      router.push(`/chat-box?${params.toString()}`)
-    } else {
-      const params = new URLSearchParams({
+      // ✅ Resume chat explicitly (prevents accidental "new" behavior)
+      // ✅ Always pass cartItemId when available, because chat-box prefers:
+      //    storageId = cartItemId || productId
+      navigate('/chat-box', {
+        mode: 'resume',
+        fromOrderQuantity: true,
         cartItemId,
         productId,
         productName,
         productCategory,
+        isCustom,
+        productImage: productImage || undefined,
+        designSessionId: designSessionId || undefined,
       })
-
-      if (productImage) {
-        params.set('productImage', productImage)
-      }
-
-      router.push(`/design?${params.toString()}`)
+    } else {
+      navigate('/design', {
+        cartItemId,
+        productId,
+        productName,
+        productCategory,
+        productImage: productImage || undefined,
+      })
     }
   }
 
-  // Rewrite initial assistant message for one-size items
-  useEffect(() => {
-    if (!isOneSizeCategory) {
-      return
+  const handleNext = async () => {
+    if (!isOrderValid || !storageId) return
+
+    // ✅ Stable pricing keys required by backend checkout
+    const { category, name } = derivePricingKeys({
+      productCategory: productData.productCategory,
+      productName: productData.productName,
+      designData,
+    })
+
+    // ✅ Determine pricingMode for backend (catalog_markup vs manual_quote)
+    const pricingMode =
+      fromChat && !isCustomProduct ? 'catalog_markup' : 'manual_quote'
+
+    // Build full conversation string from chatHistory
+    const fullConversation = chatHistory
+      .map((msg) => `${msg.role === 'user' ? 'User' : 'AI'}: ${msg.text}`)
+      .join('\n')
+
+    const orderData = {
+      // ✅ REQUIRED (backend pricing keys)
+      category,
+      name,
+      isCustom: Boolean(isCustomProduct),
+      pricingMode, // ✅ Tell backend to apply 10% markup for product-chat items
+
+      quantity,
+      comments: fullConversation, // Full conversation history (user + AI)
+      sizeBreakdownText,
+      orderNotes,
+
+      // ok to keep for UI / display
+      totalCost,
+      unitPrice,
+
+      isComplete: true,
+      fromChat,
     }
 
-    setChatHistory((prev) => {
-      if (prev.length > 1) {
-        return prev
-      }
+    if (!category || !name) return
 
-      if (
-        prev.length === 1 &&
-        prev[0].role === 'assistant' &&
-        prev[0].text.includes('how many of each size')
-      ) {
-        return [
-          {
-            role: 'assistant',
-            text:
-              'Hello! This product is one-size. Please confirm how many units you want (for example, “35 units”). ' +
-              'Once we lock in the quantity, we’ll capture any additional comments or special instructions.',
-          },
-        ]
-      }
-
-      return prev
-    })
-  }, [isOneSizeCategory])
+    // Save to both localStorage (legacy) and Dexie (primary)
+    localStorage.setItem(`orderData_${storageId}`, JSON.stringify(orderData))
+    await saveOrder(storageId, { orderData })
+    navigate('/product-showcase')
+  }
 
   return (
     <main
       className="
-    relative
-    min-h-screen
-    text-white
-    overflow-x-hidden
-    overflow-y-auto     /* mobile & small screens can scroll */
-    lg:h-screen         /* on desktop, lock to exactly 100vh */
-    lg:overflow-y-hidden
-  "
+        relative
+        min-h-screen
+        text-white
+        overflow-x-hidden
+        overflow-y-auto
+      "
       style={{
-        backgroundImage: "url('/background.png')",
+        backgroundImage: `url('${BACKGROUND_IMAGE}')`,
         backgroundSize: 'cover',
         backgroundPosition: 'center',
+        backgroundColor: '#000000',
         backgroundAttachment: 'fixed',
       }}
     >
-      {/* Step Number & Progress */}
-      <motion.div
-        className="absolute top-8 left-8 z-20"
-        initial={{ opacity: 0, x: -20 }}
-        animate={{ opacity: 1, x: 0 }}
-        transition={{ duration: 0.6 }}
-      >
-        <div className="text-white text-3xl font-light mb-2">03</div>
-        <div className="w-64 sm:w-80 md:w-96 h-1 bg-white/30 rounded-full overflow-hidden">
-          <motion.div
-            className="h-full bg-white rounded-full"
-            initial={{ width: 0 }}
-            animate={{ width: '45%' }}
-            transition={{ duration: 0.8, delay: 0.3 }}
-          />
-        </div>
-      </motion.div>
+      <StepHeader />
 
-      {/* --- MAIN GRID --- */}
-      <motion.div
-        className="mx-auto max-w-[1600px] px-4 sm:px-6 md:px-10 pt-32 md:pt-40 pb-10 grid grid-cols-12 gap-6 md:gap-8 lg:items-center"
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 1 }}
-        transition={{ duration: 0.6, delay: 0.2 }}
-      >
-        {/* --- LEFT PREVIEW CARD --- */}
-        <motion.div
-          className="col-span-12 lg:col-span-3 justify-self-center"
-          initial={{ opacity: 0, scale: 0.92 }}
-          animate={{ opacity: 1, scale: 1 }}
-          transition={{ duration: 0.7, delay: 0.35 }}
-        >
-          <motion.div
-            className="relative w-full max-w-[360px] aspect-[3/4] rounded-[28px] overflow-hidden"
-            whileHover={{
-              scale: 1.03,
-              transition: { duration: 0.25, ease: 'easeOut' },
-            }}
-          >
-            {/* Edit button */}
-            <div className="absolute top-4 left-4 z-30">
-              <button
-                type="button"
-                onClick={handleEditDesign}
-                className="bg-white/12 text-white text-xs font-medium px-3 py-1.5 rounded-full ring-1 ring-white/25 backdrop-blur-md hover:bg-white/20 transition"
-              >
-                Edit
-              </button>
-            </div>
+      <div className="relative z-10 mx-auto max-w-[1600px] px-4 sm:px-6 md:px-10 pt-32 md:pt-40 pb-10 grid grid-cols-12 gap-6 md:gap-8 lg:items-center">
+        {/* Debug: Log what's being passed to PreviewCard */}
+        {(() => {
+          
+          return null
+        })()}
+        <PreviewCard
+          displayImage={effectiveDisplayImage}
+          fallbackProductImage={
+            usingSnapshots
+              ? '' // ✅ No fallback when using snapshots - snapshot is the source of truth
+              : resolvedProductImage || productData.productImage
+          }
+          maskedBaseImage={maskedPreview.baseImage}
+          maskedColor={maskedPreview.color}
+          maskedMaskSrc={maskedPreview.maskSrc}
+          useMaskedPreview={useMaskedPreview}
+          compositePreview={useCompositePreview ? compositePreview : null}
+          productName={productData.productName}
+          hasBackSide={hasBackSide}
+          isViewingBackPreview={isViewingBackPreview}
+          onToggleBack={() => setIsViewingBackPreview((p) => !p)}
+          onEdit={handleEditDesign}
+          prioritizePreview={prioritizePreview}
+          debugEnabled={debugEnabled}
+          usingSnapshots={usingSnapshots}
+        />
 
-            {/* Glass background */}
-            <div className="absolute inset-0 rounded-[28px] bg-white/10 backdrop-blur-2xl ring-1 ring-inset ring-white/25 shadow-[0_40px_80px_-20px_rgba(0,0,0,0.55)]" />
-            <div className="absolute inset-0 bg-gradient-to-t from-black/20 to-transparent opacity-50" />
+        <QuantityCard
+          quantity={quantity}
+          setQuantity={setQuantity}
+          unitPrice={unitPrice}
+          totalCost={totalCost}
+          isOrderValid={isOrderValid}
+          isOneSizeCategory={isOneSizeCategory}
+          chatHistory={chatHistory}
+          isChatLoading={isChatLoading}
+          chatContainerRef={chatContainerRef}
+          chatInput={chatInput}
+          setChatInput={setChatInput}
+          onSend={handleChatSend}
+          navParams={navParams}
+        />
 
-            {/* Shirt container – transparent so background shows through */}
-            <div className="relative z-10 flex items-center justify-center w-full h-full">
-              {displayImage ? (
-                <img
-                  src={displayImage}
-                  alt={productData.productName || 'Product preview'}
-                  className="max-w-[80%] max-h-[80%] object-contain drop-shadow-2xl"
-                />
-              ) : productData.productImage ? (
-                <img
-                  src={productData.productImage}
-                  alt={productData.productName || 'Product preview'}
-                  className="max-w-[80%] max-h-[80%] object-contain drop-shadow-2xl"
-                />
-              ) : (
-                <div className="text-white/50 text-sm animate-pulse">
-                  Loading Preview...
-                </div>
-              )}
-            </div>
+        <NextButton isOrderValid={isOrderValid} onNext={handleNext} />
+      </div>
 
-            {hasBackSide && (
-              <button
-                onClick={() => setIsViewingBackPreview((prev) => !prev)}
-                className="absolute bottom-3 left-1/2 -translate-x-1/2 z-20 bg-white/12 text-white text-xs font-medium px-3 py-1.5 rounded-full ring-1 ring-white/25 backdrop-blur-md hover:bg-white/20 transition underline"
-              >
-                {isViewingBackPreview ? 'View Front' : 'View Back'}
-              </button>
-            )}
-          </motion.div>
-
-          <div className="mt-5 w-full max-w-[360px] flex items-center justify-between px-2">
-            <span className="text-sm md:text-base font-semibold text-white tracking-widest">
-              MADE WITH AUREN
-            </span>
-            <span className="text-sm md:text-base font-semibold text-white tracking-widest text-right">
-              &amp; YOU!
-            </span>
-          </div>
-        </motion.div>
-
-        {/* --- CENTER QUANTITY CARD --- */}
-        <motion.div
-          className="col-span-12 lg:col-span-6 justify-self-center w-full max-w-[600px]"
-          initial={{ opacity: 0, scale: 0.95, y: 10 }}
-          animate={{ opacity: 1, scale: 1, y: 0 }}
-          transition={{ duration: 0.7, delay: 0.5 }}
-        >
-          <div className="relative w-full rounded-[28px] overflow-hidden">
-            <div className="absolute inset-4 rounded-[24px] bg-gradient-to-b from-black/25 to-black/35 ring-1 ring-white/15 shadow-[inset_0_1px_0_rgba(255,255,255,0.12)]" />
-
-            <div className="relative z-10 p-8 h-full flex flex-col">
-              <h2 className="text-2xl font-semibold text-white text-center mb-6">
-                Select Order Quantity
-              </h2>
-
-              {/* Top Section: Quantity and Price */}
-              <div className="relative bg-white/5 backdrop-blur-sm ring-1 ring-white/20 rounded-2xl p-6 shadow-lg">
-                <div className="text-center mb-6">
-                  <div className="text-6xl font-light text-white mb-3">
-                    {quantity}
-                  </div>
-                  <div className="relative mx-2">
-                    <input
-                      type="range"
-                      min="35"
-                      max="500"
-                      value={quantity}
-                      onChange={(e) => setQuantity(Number(e.target.value))}
-                      className="w-full h-2 bg-white/20 rounded-full appearance-none cursor-pointer slider"
-                    />
-                    <style jsx>{`
-                      .slider::-webkit-slider-thumb {
-                        appearance: none;
-                        width: 20px;
-                        height: 20px;
-                        border-radius: 50%;
-                        background: white;
-                        cursor: pointer;
-                        box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
-                      }
-                      .slider::-moz-range-thumb {
-                        width: 20px;
-                        height: 20px;
-                        border-radius: 50%;
-                        background: white;
-                        cursor: pointer;
-                        border: none;
-                        box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
-                      }
-                    `}</style>
-                  </div>
-                </div>
-                <div className="text-center">
-                  <p className="text-white/80 mb-2">
-                    For {quantity} units, it will cost ${unitPrice.toFixed(2)}/unit
-                  </p>
-                  <p className="text-2xl font-semibold text-white">
-                    Your total cost is ${totalCost.toFixed(2)}
-                  </p>
-
-                  {!isOrderValid && !isOneSizeCategory && (
-                    <p className="text-red-400 text-sm mt-3 text-center">
-                      Sizes must total exactly {quantity} units before continuing.
-                    </p>
-                  )}
-
-                  {!isOrderValid && isOneSizeCategory && (
-                    <p className="text-red-400 text-sm mt-3 text-center">
-                      Please confirm the {quantity} units with the AI assistant before
-                      continuing.
-                    </p>
-                  )}
-                </div>
-              </div>
-
-              {/* --- AI Assistant Section --- */}
-              <div className="mt-6 space-y-2">
-                <div className="flex justify-between items-center px-1">
-                  <h3 className="text-base font-medium text-white/80 text-left">
-                    AI Order Assistant
-                  </h3>
-                  <Link
-                    href={`/size-chart?${searchParams.toString()}`}
-                    className="text-sm text-white/70 underline hover:text-white"
-                  >
-                    View Size Chart
-                  </Link>
-                </div>
-
-                <div className="relative h-72 bg-white/5 backdrop-blur-sm ring-1 ring-white/20 rounded-2xl overflow-hidden flex flex-col">
-                  <div
-                    ref={chatContainerRef}
-                    className="flex-1 p-4 overflow-y-auto space-y-3 scrollbar-hide"
-                  >
-                    {chatHistory.map((msg, i) => (
-                      <div
-                        key={i}
-                        className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'
-                          }`}
-                      >
-                        <div
-                          className={`max-w-[85%] px-3 py-2 rounded-xl text-sm leading-relaxed ${msg.role === 'user'
-                              ? 'bg-white/20 text-white'
-                              : 'bg-black/40 text-white/90'
-                            }`}
-                        >
-                          {msg.text}
-                        </div>
-                      </div>
-                    ))}
-                    {isChatLoading && (
-                      <div className="flex justify-start">
-                        <div className="bg-black/40 px-3 py-2 rounded-xl text-xs text-white/60 animate-pulse">
-                          Thinking...
-                        </div>
-                      </div>
-                    )}
-                  </div>
-
-                  <div className="p-2 bg-white/5 border-t border-white/10 flex gap-2 items-center">
-                    <input
-                      value={chatInput}
-                      onChange={(e) => setChatInput(e.target.value)}
-                      onKeyDown={(e) => e.key === 'Enter' && handleChatSend()}
-                      placeholder={
-                        isOneSizeCategory
-                          ? 'Tell me how many units you want (e.g. 35) or ask a question...'
-                          : 'Type your sizes or questions (e.g. 20 S, 10 M, 5 L)...'
-                      }
-                      className="flex-1 bg-transparent border-none outline-none text-sm text-white placeholder-white/50 px-2"
-                    />
-                    <button
-                      onClick={handleChatSend}
-                      disabled={isChatLoading || !chatInput.trim()}
-                      className="p-2 rounded-lg bg-white/10 hover:bg-white/20 text-white disabled:opacity-50 transition flex items-center justify-center"
-                    >
-                      <svg
-                        width="16"
-                        height="16"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth="2"
-                      >
-                        <path
-                          d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                        />
-                      </svg>
-                    </button>
-                  </div>
-                </div>
-              </div>
-              {/* --- END: AI Assistant Section --- */}
-            </div>
-          </div>
-        </motion.div>
-
-        {/* RIGHT: Next button */}
-        <motion.div
-          className="col-span-12 lg:col-span-3 justify-self-center"
-          initial={{ opacity: 0, x: 40 }}
-          animate={{ opacity: 1, x: 0 }}
-          transition={{ duration: 0.6, delay: 0.65 }}
-        >
-          <motion.button
-            onClick={handleNext}
-            disabled={!isOrderValid}
-            className={`relative w-32 h-14 rounded-full text-white text-lg font-semibold ${!isOrderValid ? 'opacity-40 cursor-not-allowed' : ''
-              }`}
-            whileHover={isOrderValid ? { scale: 1.06 } : {}}
-            whileTap={isOrderValid ? { scale: 0.96 } : {}}
-          >
-            <span className="absolute inset-0 rounded-full bg-white/12 backdrop-blur-md ring-1 ring-inset ring-white/30 shadow-[0_10px_30px_rgba(0,0,0,0.35)]" />
-            <span className="absolute inset-0 rounded-full bg-gradient-to-br from-white/10 to-transparent" />
-            <span className="relative z-10">Next</span>
-          </motion.button>
-        </motion.div>
-      </motion.div>
     </main>
   )
 }
 
 export default function OrderQuantity() {
   return (
-    <Suspense
-      fallback={
-        <main className="relative min-h-screen text-white overflow-hidden flex items-center justify-center">
-          <div className="text-white">Loading...</div>
-        </main>
-      }
-    >
+    <Suspense fallback={<OrderQuantitySkeleton />}>
       <OrderQuantityContent />
     </Suspense>
   )

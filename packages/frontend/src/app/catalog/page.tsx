@@ -4,7 +4,10 @@ import type React from 'react'
 import { motion } from 'framer-motion'
 import Link from 'next/link'
 import Image from 'next/image'
-import { useRouter } from 'next/navigation'
+import { useEffect } from 'react'
+import { measurePageLoad } from '@/lib/performance'
+import { useCleanNavigation } from '@/hooks/useCleanNavigation'
+import { SUBTRACT_IMAGE, BACKGROUND_IMAGE } from '@/lib/cdn-assets'
 
 type CardsProps = {
   handleStartAiChat: (e: React.MouseEvent<HTMLAnchorElement>) => void
@@ -50,11 +53,13 @@ function Cards({ handleStartAiChat }: CardsProps) {
           <div className="flex flex-col items-center justify-center px-6 mt-2 text-center">
             <div className="h-14 w-14 md:h-16 md:w-16 flex items-center justify-center mb-4">
               <Image
-                src="/Subtract.png"
+                src={SUBTRACT_IMAGE}
                 alt="Catalog"
                 width={56}
                 height={56}
+                priority
                 className="opacity-70 group-hover:opacity-100 transition-opacity w-12 h-12 md:w-14 md:h-14"
+                unoptimized
               />
             </div>
             <h2 className="text-2xl md:text-3xl font-bold mb-2">Catalog</h2>
@@ -165,18 +170,22 @@ function Cards({ handleStartAiChat }: CardsProps) {
 }
 
 export default function CatalogPage() {
-  const router = useRouter()
+  const { navigate } = useCleanNavigation()
+
+  useEffect(() => {
+    measurePageLoad('Catalog')
+  }, [])
 
   const handleStartAiChat = (e: React.MouseEvent<HTMLAnchorElement>) => {
     e.preventDefault()
-    router.push('/chat-box')
+    navigate('/chat-box', { mode: 'new' })
   }
 
   return (
     <main
       className="relative min-h-screen text-white overflow-hidden"
       style={{
-        backgroundImage: "url('/background.png')",
+        backgroundImage: `url('${BACKGROUND_IMAGE}')`,
         backgroundSize: 'cover',
         backgroundPosition: 'center',
         backgroundAttachment: 'fixed',

@@ -2,23 +2,24 @@
 
 import { motion } from 'framer-motion'
 import Image from 'next/image'
-import Link from 'next/link'
-import { useSearchParams } from 'next/navigation'
 import { Suspense } from 'react'
+import { AUREN_LOGO, SIZE_CHART } from '@/lib/cdn-assets'
+import { useNavigationParams } from '@/hooks/useNavigationParams'
+import { useCleanNavigation } from '@/hooks/useCleanNavigation'
 
 function SizeChartContent() {
-  const searchParams = useSearchParams()
+  const navParams = useNavigationParams()
+  const { navigate } = useCleanNavigation()
 
   // Decide where to go back to
-  const from = searchParams.get('from')
-
-  // Clone params and drop the "from" flag so we don't keep it forever
-  const params = new URLSearchParams(searchParams.toString())
-  params.delete('from')
-  const rest = params.toString()
-
+  const from = navParams.from
   const backBase = from === 'manual-order' ? '/manual-order' : '/order-quantity'
-  const backLink = rest ? `${backBase}?${rest}` : backBase
+
+  const handleBack = () => {
+    // Pass back all params except 'from'
+    const { from: _, ...restParams } = navParams
+    navigate(backBase, restParams)
+  }
 
   return (
     <main className="relative min-h-screen bg-white overflow-hidden">
@@ -28,10 +29,11 @@ function SizeChartContent() {
           <div className="flex items-center gap-3">
             <div className="w-8 h-8 relative">
               <Image
-                src="/auren_white_logo.png"
+                src={AUREN_LOGO}
                 alt="Auren Logo"
                 fill
                 className="object-contain"
+                unoptimized
               />
             </div>
             <span className="text-gray-900 text-xl font-light">auren</span>
@@ -53,12 +55,13 @@ function SizeChartContent() {
 
           <div className="bg-white rounded-lg shadow-lg overflow-hidden">
             <Image
-              src="/size_chart.png"
+              src={SIZE_CHART}
               alt="Standard U.S. Apparel Size Chart"
               width={800}
               height={1000}
               className="w-full h-auto"
               priority
+              unoptimized
             />
           </div>
 
@@ -67,20 +70,20 @@ function SizeChartContent() {
               Use this chart to determine the best size for your apparel order.
             </p>
             <p className="text-sm">
-              If you're between sizes, we recommend choosing the larger size for a more comfortable fit.
+              If you&apos;re between sizes, we recommend choosing the larger size for a more comfortable fit.
             </p>
           </div>
 
           <div className="mt-8">
-            <Link
-              href={backLink}
+            <button
+              onClick={handleBack}
               className="inline-flex items-center px-6 py-3 bg-gray-900 text-white rounded-lg hover:bg-gray-800 transition-colors"
             >
               Continue with Order
               <svg className="w-5 h-5 ml-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
               </svg>
-            </Link>
+            </button>
           </div>
         </motion.div>
       </div>

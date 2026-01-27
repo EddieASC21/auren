@@ -1,11 +1,19 @@
+// packages/backend/auren-demo/src/app/api/checkout/route.ts
+
 import { NextResponse } from "next/server";
 import { Storage } from "@google-cloud/storage";
 import Stripe from "stripe";
 import { db } from "@/lib/firestore";
 import { v4 as uuidv4 } from "uuid";
+import { getQuote } from "@/lib/pricing/pricing";
+import { rateLimit, RATE_LIMITS } from "@/lib/rateLimit";
+
+export const dynamic = "force-dynamic";
 
 // 🔧 CONFIG
-const DEFAULT_ALLOWED_ORIGIN = process.env.FRONTEND_URL || "http://localhost:3000";
+const DEFAULT_ALLOWED_ORIGIN =
+  process.env.FRONTEND_URL || "http://localhost:3000";
+const FRONTEND_URL = process.env.FRONTEND_URL || "http://localhost:3000";
 const bucketName = process.env.GCP_BUCKET_NAME || "auren-user-designs";
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
@@ -51,7 +59,8 @@ function getCleanSizeString(rawText: string, totalQty?: number) {
     if (["SMALL", "SM", "S"].includes(size)) size = "S";
     else if (["MEDIUM", "MD", "M"].includes(size)) size = "M";
     else if (["LARGE", "LG", "L"].includes(size)) size = "L";
-    else if (["EXTRA", "EXTRA LARGE", "XLARGE", "XL"].includes(size)) size = "XL";
+    else if (["EXTRA", "EXTRA LARGE", "XLARGE", "XL"].includes(size))
+      size = "XL";
     else if (["2XL", "XXL", "2X"].includes(size)) size = "2XL";
 
     // Only keep valid sizes
@@ -88,23 +97,152 @@ function getCleanSizeString(rawText: string, totalQty?: number) {
     .join(", ");
 }
 
-// 📸 HELPER: ROBUST IMAGE UPLOAD
-async function uploadDesignImage(base64String: string | null, suffix: string = "front") {
-  if (!base64String || base64String.length < 100) return null;
+// ------------------------------------------------------------------
+// 📸 IMAGE HELPERS
+// ------------------------------------------------------------------
+function isHttpUrl(s: string) {
+  return s.startsWith("http://") || s.startsWith("https://");
+}
+
+function isRelativeUrl(s: string) {
+  return s.startsWith("/");
+}
+
+function isDataUrl(s: string) {
+  return s.startsWith("data:image/");
+}
+
+function head(s: string | null | undefined, n = 40) {
+  if (!s) return null;
+  return s.slice(0, n);
+}
+
+function contentTypeToExt(contentType: string) {
+  const ct = contentType.toLowerCase();
+  if (ct.includes("png")) return "png";
+  if (ct.includes("jpeg") || ct.includes("jpg")) return "jpg";
+  if (ct.includes("webp")) return "webp";
+  return "png";
+}
+
+async function fetchImageBytes(url: string): Promise<{
+  buffer: Buffer;
+  contentType: string;
+} | null> {
+  try {
+    const res = await fetch(url);
+    if (!res.ok) {
+      console.warn("⚠️ [checkout] fetch failed", { url, status: res.status });
+      return null;
+    }
+    const contentType = res.headers.get("content-type") || "image/png";
+    const ab = await res.arrayBuffer();
+    const buffer = Buffer.from(ab);
+    if (!buffer || buffer.length < 32) {
+      console.warn("⚠️ [checkout] fetched image too small", { url });
+      return null;
+    }
+    return { buffer, contentType };
+  } catch (e) {
+    console.warn("⚠️ [checkout] fetch error", { url, error: e });
+    return null;
+  }
+}
+
+// ✅ No `s` (dotAll) flag; works with older TS targets.
+// Uses [\s\S]* to match across newlines.
+function parseDataUrl(
+  dataUrl: string
+): { base64Data: string; contentType: string } | null {
+  // Example: data:image/png;base64,AAAA...
+  const match =
+    /^data:(image\/[a-zA-Z0-9.+-]+);base64,([\s\S]*)$/.exec(dataUrl);
+  if (!match) return null;
+  return { contentType: match[1], base64Data: match[2] };
+}
+
+/**
+ * Normalize an "image input" string into raw bytes + contentType.
+ * Supports:
+ * - data:image/...;base64,...
+ * - raw base64 (assumed png)
+ * - http(s) url
+ * - /relative url (resolved against FRONTEND_URL)
+ */
+async function resolveImageToBytes(input: string): Promise<{
+  buffer: Buffer;
+  contentType: string;
+} | null> {
+  const val = input.trim();
+
+  if (isDataUrl(val)) {
+    const parsed = parseDataUrl(val);
+    if (!parsed) return null;
+
+    const buffer = Buffer.from(parsed.base64Data, "base64");
+    if (!buffer || buffer.length < 32) return null;
+
+    return { buffer, contentType: parsed.contentType || "image/png" };
+  }
+
+  if (isHttpUrl(val)) {
+    return await fetchImageBytes(val);
+  }
+
+  if (isRelativeUrl(val)) {
+    const abs = `${FRONTEND_URL}${val}`;
+    return await fetchImageBytes(abs);
+  }
+
+  // Assume raw base64 (no header)
+  if (val.length < 100) return null;
 
   try {
-    const base64Data = base64String.includes("base64,")
-      ? base64String.split("base64,")[1]
-      : base64String;
+    const buffer = Buffer.from(val, "base64");
+    if (!buffer || buffer.length < 32) return null;
+    return { buffer, contentType: "image/png" };
+  } catch {
+    return null;
+  }
+}
 
-    const buffer = Buffer.from(base64Data, "base64");
-    const fileName = `orders/${uuidv4()}-${suffix}.png`;
+// ------------------------------------------------------------------
+// 📸 HELPER: ROBUST IMAGE UPLOAD
+// ------------------------------------------------------------------
+async function uploadDesignImage(
+  imageInput: string | null,
+  suffix: string = "front"
+) {
+  if (!imageInput) return null;
+
+  const trimmed = imageInput.trim();
+  if (!trimmed) return null;
+
+  const resolved = await resolveImageToBytes(trimmed);
+  if (!resolved) {
+    console.warn(
+      "⚠️ [checkout] uploadDesignImage: could not resolve image input",
+      {
+        suffix,
+        head: head(trimmed),
+        len: trimmed.length,
+      }
+    );
+    return null;
+  }
+
+  try {
+    const { buffer, contentType } = resolved;
+    const ext = contentTypeToExt(contentType);
+    const fileName = `orders/${uuidv4()}-${suffix}.${ext}`;
+
     const bucket = storage.bucket(bucketName);
     const file = bucket.file(fileName);
 
     await file.save(buffer, {
-      contentType: "image/png",
+      contentType,
       metadata: { cacheControl: "public, max-age=31536000" },
+      resumable: false,
     });
 
     const publicUrl = `https://storage.googleapis.com/${bucketName}/${fileName}`;
@@ -129,6 +267,12 @@ export async function OPTIONS(req: Request) {
 export async function POST(req: Request) {
   const origin = req.headers.get("origin");
 
+  // ✅ Rate limiting: Prevent checkout spam and abuse
+  const limitCheck = await rateLimit(req, RATE_LIMITS.CHECKOUT);
+  if (limitCheck.limited) {
+    return limitCheck.response;
+  }
+
   try {
     const bodyText = await req.text();
     if (!bodyText) {
@@ -138,7 +282,9 @@ export async function POST(req: Request) {
       );
     }
 
-    const { cartItems } = JSON.parse(bodyText);
+    const parsed = JSON.parse(bodyText);
+    const cartItems = parsed?.cartItems;
+
     if (!cartItems || cartItems.length === 0) {
       return NextResponse.json(
         { error: "Cart is empty" },
@@ -146,47 +292,117 @@ export async function POST(req: Request) {
       );
     }
 
-    // 1. ENRICH ITEMS + UPLOAD IMAGES
+    console.log(
+      "🧾 cartItems[0] pricing keys:",
+      JSON.stringify(
+        {
+          category: cartItems?.[0]?.orderData?.category,
+          name: cartItems?.[0]?.orderData?.name,
+          quantity: cartItems?.[0]?.orderData?.quantity,
+          isCustom: cartItems?.[0]?.orderData?.isCustom,
+        },
+        null,
+        2
+      )
+    );
+
+    // 1) ENRICH ITEMS + UPLOAD IMAGES + ✅ SERVER-SIDE PRICING
     const enrichedItems = await Promise.all(
       cartItems.map(async (item: any, index: number) => {
         const quantity = Number(item.orderData?.quantity || 1);
-        const unitPrice = Number(item.orderData?.unitPrice || 0);
+        if (!Number.isFinite(quantity) || quantity < 1) {
+          throw new Error(`Invalid quantity for item #${index + 1}`);
+        }
+
+        const category = String(item.orderData?.category || "").trim();
+        const name = String(item.orderData?.name || "").trim();
+        const isCustom = Boolean(item.orderData?.isCustom);
+
+        if (!category || !name) {
+          throw new Error(
+            `Missing pricing keys for item #${index + 1}. Required: orderData.category and orderData.name`
+          );
+        }
+
+        const quote = getQuote({ category, name, quantity, isCustom });
+        if (quote.unitPriceCents <= 0) {
+          throw new Error(
+            `No pricing found for item #${index + 1} (category="${category}", name="${name}")`
+          );
+        }
+
+        // ✅ Apply 10% markup for catalog items from product-chat (pricingMode: "catalog_markup")
+        const pricingMode = item.orderData?.pricingMode;
+        const isFromProductChat = pricingMode === "catalog_markup";
+
+        let unitPrice = quote.unitPriceCents / 100;
+
+        if (isFromProductChat && !isCustom) {
+          unitPrice = unitPrice * 1.1; // 10% markup for product-chat catalog items
+          console.log(`📈 Applied 10% markup for product-chat item #${index + 1}: $${(quote.unitPriceCents / 100).toFixed(2)} → $${unitPrice.toFixed(2)}`);
+        }
+
         const subtotal = unitPrice * quantity;
         const taxAmount = subtotal * 0.08;
         const totalWithTax = subtotal + taxAmount;
 
-        // --- IMAGE HANDLING ---
-        let frontUrl = item.designData?.productImage || "";
-        let backUrl = null;
-
         console.log(`📸 Processing Item ${index + 1}...`);
 
-        const rawFront = item.snapshotFront || item.snapshotBase64;
-        if (rawFront) {
-          const url = await uploadDesignImage(rawFront, "front");
-          if (url) frontUrl = url;
+        const rawFront =
+          item.snapshotFront ||
+          item.snapshotBase64 ||
+          item.frontImageUrl ||
+          item.designData?.productImage ||
+          item.designData?.frontUploadedImages?.[0]?.src ||
+          null;
+
+        const rawBack =
+          item.snapshotBack ||
+          item.backImageUrl ||
+          item.designData?.backUploadedImages?.[0]?.src ||
+          null;
+
+        console.log("🧾 [checkout] image inputs", {
+          index: index + 1,
+          rawFrontHead: head(typeof rawFront === "string" ? rawFront : null),
+          rawBackHead: head(typeof rawBack === "string" ? rawBack : null),
+          rawFrontLen: typeof rawFront === "string" ? rawFront.length : null,
+          rawBackLen: typeof rawBack === "string" ? rawBack.length : null,
+        });
+
+        let frontUrl: string = "";
+        let backUrl: string | null = null;
+
+        if (typeof rawFront === "string" && rawFront.trim()) {
+          const uploaded = await uploadDesignImage(rawFront, "front");
+          if (uploaded) frontUrl = uploaded;
         }
 
-        if (item.snapshotBack) {
-          const url = await uploadDesignImage(item.snapshotBack, "back");
-          if (url) backUrl = url;
+        if (typeof rawBack === "string" && rawBack.trim()) {
+          const uploaded = await uploadDesignImage(rawBack, "back");
+          if (uploaded) backUrl = uploaded;
         }
 
-        if (frontUrl && frontUrl.startsWith("/")) {
-          const baseUrl = process.env.FRONTEND_URL || "http://localhost:3000";
-          frontUrl = `${baseUrl}${frontUrl}`;
-        }
-        frontUrl = encodeURI(frontUrl);
+        console.log("🧾 [checkout] resolved uploads", {
+          index: index + 1,
+          frontUrl,
+          backUrl,
+        });
 
-        // ------------------------------------------------------------------
-        // 👇 2. APPLY CLEANING LOGIC HERE
-        // ------------------------------------------------------------------
         const rawBreakdown =
           item.orderData?.sizeBreakdownText || item.orderData?.comments || "";
         const cleanBreakdown = getCleanSizeString(rawBreakdown, quantity);
 
+        const productDisplayName =
+          item.designData?.selectedProductName || "Custom Auren Product";
+
         return {
-          productName: item.designData?.selectedProductName || "Custom Auren Product",
+          productName: productDisplayName,
+
+          pricingCategory: category,
+          pricingName: name,
+          isCustom,
+
           quantity,
           unitPrice,
           subtotal,
@@ -195,13 +411,20 @@ export async function POST(req: Request) {
           totalWithTax,
           sizeBreakdown: cleanBreakdown,
           comments: item.orderData?.comments || "",
-          imageUrl: frontUrl,
+
+          imageUrl: frontUrl || "",
           backImageUrl: backUrl,
         };
       })
     );
 
-    // 2. SAVE TO FIRESTORE
+    for (const [i, it] of enrichedItems.entries()) {
+      if (!Number.isFinite(it.totalWithTax) || it.totalWithTax <= 0) {
+        throw new Error(`Invalid computed total for item #${i + 1}`);
+      }
+    }
+
+    // 2) SAVE TO FIRESTORE
     const orderRef = db.collection("orders").doc();
     const orderId = orderRef.id;
 
@@ -213,57 +436,99 @@ export async function POST(req: Request) {
 
     console.log(`📝 Order Created in Firestore: ${orderId}`);
 
-    // 3. PREPARE STRIPE ITEMS
-    const line_items = enrichedItems.map((item) => {
-      const taxPercent = (item.taxRate * 100).toFixed(0); // 8 -> "8"
+    // 3) CREATE OR RETRIEVE 8% TAX RATE (auto-discovery)
+    // This tax rate will be applied AFTER promo codes discount the subtotal
+    let taxRateId = process.env.STRIPE_TAX_RATE_ID;
+    const desiredTaxDisplayName = "Tax, Shipping, and Handling";
 
-      const desc = `Qty: ${item.quantity} • Subtotal: $${item.subtotal.toFixed(
-        2
-      )} • Tax, Shipping, and Handling (${taxPercent}%): $${item.taxAmount.toFixed(2)}`;
+    if (taxRateId) {
+      try {
+        const existingRate = await stripe.taxRates.retrieve(taxRateId);
+        if (existingRate.display_name !== desiredTaxDisplayName) {
+          const updated = await stripe.taxRates.update(taxRateId, {
+            display_name: desiredTaxDisplayName,
+            description: desiredTaxDisplayName,
+          });
+          console.log(
+            `✅ Updated tax rate display name: ${existingRate.display_name} -> ${updated.display_name}`
+          );
+        }
+      } catch (err) {
+        console.warn("⚠️ Could not retrieve/update STRIPE_TAX_RATE_ID:", err);
+      }
+    }
+
+    if (!taxRateId) {
+      // First, try to find an existing 8% tax rate
+      const existingRates = await stripe.taxRates.list({ limit: 100, active: true });
+      const existing8PercentRate = existingRates.data.find(
+        rate => rate.percentage === 8.0 && rate.inclusive === false
+      );
+
+      if (existing8PercentRate) {
+        taxRateId = existing8PercentRate.id;
+        if (existing8PercentRate.display_name !== desiredTaxDisplayName) {
+          await stripe.taxRates.update(taxRateId, {
+            display_name: desiredTaxDisplayName,
+            description: desiredTaxDisplayName,
+          });
+        }
+        console.log(`✅ Found existing 8% tax rate: ${taxRateId}`);
+      } else {
+        // Create tax rate if it doesn't exist
+        const taxRate = await stripe.taxRates.create({
+          display_name: desiredTaxDisplayName,
+          description: desiredTaxDisplayName,
+          percentage: 8.0,
+          inclusive: false, // Tax added on top (after discount)
+        });
+        taxRateId = taxRate.id;
+        console.log(`✅ Created new 8% tax rate: ${taxRateId}`);
+      }
+    }
+
+    // 3.5) PREPARE STRIPE ITEMS with tax rates
+    const line_items = enrichedItems.map((item) => {
+      const desc = `Qty: ${item.quantity}${item.sizeBreakdown ? ' • ' + item.sizeBreakdown : ''}`;
 
       return {
         price_data: {
           currency: "usd",
           product_data: {
             name: item.productName,
-            description: desc,
+            description: desc.trim(),
           },
-          // still charging subtotal + tax
-          unit_amount: Math.round(item.totalWithTax * 100),
+          unit_amount: Math.round(item.subtotal * 100), // Pre-tax subtotal
         },
         quantity: 1,
+        tax_rates: [taxRateId!], // Apply 8% tax to this item (after discount)
       };
     });
 
-    // 4. CREATE STRIPE SESSION
+    // 4) CREATE STRIPE SESSION
     const session = await stripe.checkout.sessions.create({
       payment_method_types: ["card"],
       mode: "payment",
       line_items,
-      success_url: `${
-        process.env.FRONTEND_URL || "http://localhost:3000"
-      }/success?session_id={CHECKOUT_SESSION_ID}&order_id=${orderId}`,
-      cancel_url: `${
-        process.env.FRONTEND_URL || "http://localhost:3000"
-      }/product-showcase`,
+      success_url: `${FRONTEND_URL}/success?session_id={CHECKOUT_SESSION_ID}&order_id=${orderId}`,
+      cancel_url: `${FRONTEND_URL}/product-showcase`,
       billing_address_collection: "required",
       shipping_address_collection: {
         allowed_countries: ["US", "CA", "GB", "AU"],
       },
+      allow_promotion_codes: true,
       metadata: { aurenOrderId: orderId },
       payment_intent_data: { metadata: { aurenOrderId: orderId } },
     });
 
     return NextResponse.json(
       { url: session.url },
-      {
-        headers: getCorsHeaders(origin),
-      }
+      { headers: getCorsHeaders(origin) }
     );
   } catch (error: any) {
     console.error("Checkout Error:", error);
     return NextResponse.json(
-      { error: error.message },
+      { error: error.message || "Checkout failed" },
       { status: 500, headers: getCorsHeaders(origin) }
     );
   }

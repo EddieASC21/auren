@@ -1,5 +1,6 @@
 import OpenAI from "openai";
 import { NextResponse } from "next/server";
+import { rateLimit, RATE_LIMITS } from "@/lib/rateLimit";
 
 
 // --- Define your live frontend URL ---
@@ -27,6 +28,12 @@ export async function OPTIONS() {
 
 // --- 🔹 Handle POST requests (actual chat logic)
 export async function POST(req: Request) {
+ // ✅ Rate limiting: AI chat is moderately expensive
+ const limitCheck = await rateLimit(req, RATE_LIMITS.AI_MODERATE);
+ if (limitCheck.limited) {
+   return limitCheck.response;
+ }
+
  try {
    // 👇 Now accepts previousPrompt + imageBase64
    const { prompt, imageBase64, previousPrompt } = await req.json();

@@ -103,6 +103,10 @@ export async function POST(req: Request) {
     --- STAGE 2: DECORATION (Only if Custom Design = YES) ---
     - If sizes are valid, but decoration is unknown:
       - Ask: "Do you prefer Screen Print or Embroidery?"
+    - **VALIDATION**: The user MUST say "screen print", "screen printed", "embroidery", or "embroidered" (case-insensitive).
+      - If they respond with anything else (e.g., "no", "yes", "I don't know", "neither"), say:
+        "Sorry, I didn't catch that! Did you want Screen Print or Embroidery?"
+      - Do NOT move to the next stage until a valid decoration is chosen.
     - If they ask for an explanation, explain briefly, then ask which they prefer.
     - Once decoration is chosen (or if already known), IMMEDIATELY move to comments: "Great, [Choice] selected. Any additional comments or special instructions?"
 
@@ -167,6 +171,10 @@ export async function POST(req: Request) {
     --- STAGE 2: DECORATION (ONLY IF CUSTOM DESIGN = YES) ---
     • If there is a custom design and the decoration method is not yet chosen:
       - Ask: "Do you prefer Screen Print or Embroidery for this design?"
+    • **VALIDATION**: The user MUST say "screen print", "screen printed", "embroidery", or "embroidered" (case-insensitive).
+      - If they respond with anything else (e.g., "no", "yes", "I don't know", "neither"), say:
+        "Sorry, I didn't catch that! Did you want Screen Print or Embroidery?"
+      - Do NOT move to the next stage until a valid decoration is chosen.
     • If they ask for an explanation, briefly explain the difference, then ask which they prefer.
     • Once decoration is chosen:
       - Immediately move to comments:
@@ -237,6 +245,25 @@ export async function POST(req: Request) {
     let confirmedOrderId: string | null = null;
     let originalDraftData: any = null;
 
+    // Build full conversation history including the current exchange
+    const fullConversation = [
+      ...chatHistory.map((msg: any) => ({
+        role: msg.role,
+        text: msg.text,
+        timestamp: msg.timestamp || now,
+      })),
+      {
+        role: "user",
+        text: userMsg,
+        timestamp: now,
+      },
+      {
+        role: "assistant",
+        text: aiReply,
+        timestamp: now,
+      },
+    ];
+
     await db.runTransaction(async (t) => {
       const draftRef = db.collection("orders_draft").doc(draftId || "demo-draft-123");
       const draftSnap = await t.get(draftRef);
@@ -262,6 +289,7 @@ export async function POST(req: Request) {
       t.set(confirmedRef, {
         draftId: draftId || "demo-draft-123",
         aiReply,
+        conversationHistory: fullConversation, // Store full conversation
         original: originalDraftData,
         createdAt: now,
         status: "confirmed",

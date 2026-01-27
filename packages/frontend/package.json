@@ -6,6 +6,7 @@
     "dev": "next dev -p 3000",
     "build": "next build",
     "postbuild": "node scripts/prepare-standalone.js",
+    "verify-standalone-next": "node scripts/verify-standalone-next.js",
     "start": "NODE_ENV=production next start -p 8080",
     "lint": "next lint",
     "analyze": "ANALYZE=true npm run build",

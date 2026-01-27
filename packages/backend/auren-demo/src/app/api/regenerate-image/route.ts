@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { GoogleAuth } from "google-auth-library";
+import { rateLimit, RATE_LIMITS } from "@/lib/rateLimit";
 
 // --- Define your live frontend URL ---
 const LIVE_FRONTEND_URL = process.env.FRONTEND_URL || "http://localhost:3000";
@@ -18,8 +19,14 @@ export async function OPTIONS() {
 
 // Image regeneration endpoint using Google Vertex AI Imagen 3
 export async function POST(req: Request) {
+  // ✅ Rate limiting: Image regeneration is expensive
+  const limitCheck = await rateLimit(req, RATE_LIMITS.AI_STRICT);
+  if (limitCheck.limited) {
+    return limitCheck.response;
+  }
+
   try {
-    
+
     // Parse the request body
     const { imageBase64, suggestion, originalPrompt } = await req.json();
 
